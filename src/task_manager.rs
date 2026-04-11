@@ -30,8 +30,12 @@ pub struct Voice {
     pub sine: WtableOscillator,
     pub triangle: WtableOscillator,
     pub saw: WtableOscillator,
+
+    pub modulator: WtableOscillator,
+
     pub adsr: AdsrEnvelope,
     pub active_freq: f32,
+    pub active_key: usize,
 }
 
 impl Voice {
@@ -47,6 +51,9 @@ impl Voice {
 pub struct TaskManager {
     pub voices: [Voice; 8],
     pub last_key_mask: u32,
+
+    pub shared_fm_ratio: Arc<AtomicU32>,
+    pub shared_fm_amount: Arc<AtomicU32>,
 
     pub shared_key_mask: Arc<AtomicU32>,
     pub shared_duty_bits: Arc<AtomicU32>,
@@ -77,14 +84,16 @@ impl Iterator for TaskManager {
                         if voice.adsr.stage == AdsrStage::Off {
                             voice.set_freq(freq);
                             voice.adsr.note_on();
+                            voice.active_key = i;
                             break;
                         }
                     }
                 } else if !is_pressed && was_pressed {
                     // NOTE OFF: Oprim vocea care cântă această frecvență
                     for voice in self.voices.iter_mut() {
-                        if voice.active_freq == freq && voice.adsr.stage != AdsrStage::Off {
+                        if voice.active_key == i && voice.adsr.stage != AdsrStage::Off {
                             voice.adsr.note_off();
+                            voice.active_key = 99;
                         }
                     }
                 }
@@ -92,25 +101,33 @@ impl Iterator for TaskManager {
             self.last_key_mask = current_mask;
         }
 
+        // FM modulation
+        let fm_ratio = f32::from_bits(self.shared_fm_ratio.load(Ordering::Relaxed));
+        let fm_amount = f32::from_bits(self.shared_fm_amount.load(Ordering::Relaxed));
+
         // mix sound
         let mut mixed_sample = 0.0;
 
         for voice in self.voices.iter_mut() {
             if voice.adsr.stage != AdsrStage::Off {
                 let env_vol = voice.adsr.tick();
+                voice.modulator.set_freq(voice.active_freq * fm_ratio);
+                let mod_signal = voice.modulator.get_sample();
+
+                let modulated_freq = (voice.active_freq + (mod_signal * fm_amount * voice.active_freq)).max(1.0);
 
                 let raw_sample = match mode {
-                    0 => voice.pulse.get_sample(duty),
-                    1 => voice.sine.get_sample(),
-                    2 => voice.triangle.get_sample(),
-                    3 => voice.saw.get_sample(),
+                    0 => {voice.pulse.set_freq(modulated_freq); voice.pulse.get_sample(duty)},
+                    1 => {voice.sine.set_freq(modulated_freq); voice.sine.get_sample()},
+                    2 => {voice.triangle.set_freq(modulated_freq); voice.triangle.get_sample()},
+                    3 => {voice.saw.set_freq(modulated_freq); voice.saw.get_sample()},
                     _ => 0.0,
                 };
                 mixed_sample += raw_sample * env_vol;
             }
         }
 
-        Some(mixed_sample)
+        Some(mixed_sample * 0.125)
     }
 }
 

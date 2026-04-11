@@ -25,9 +25,9 @@ impl AdsrEnvelope {
             value: 0.0,
             sample_rate: sample_rate as f32,
             attack_time: 0.05,
-            decay_time: 0.1,
-            sustain_level: 0.7,
-            release_time: 0.3,
+            decay_time: 0.8,
+            sustain_level: 0.8,
+            release_time: 0.4,
         }
     }
 
@@ -53,7 +53,7 @@ impl AdsrEnvelope {
             }
             AdsrStage::Sustain => self.value = self.sustain_level,
             AdsrStage::Release => {
-                self.value -= self.sustain_level / (self.release_time * self.sample_rate);
+                self.value -= 1.0 / (self.release_time * self.sample_rate);
                 if self.value <= 0.0 {
                     self.value = 0.0;
                     self.stage = AdsrStage::Off;
