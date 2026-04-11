@@ -43,10 +43,6 @@ pub fn wave_sine(i: usize, size: usize) -> f32 {
     (2.0 * pi * i as f32 / size as f32).sin()
 }
 
-pub fn wave_square(i: usize, size: usize) -> f32 {
-    if wave_sine(i, size) >= 0.0 { 1.0 } else { -1.0 }
-}
-
 pub fn wave_triangle(i: usize, size: usize) -> f32 {
     let pi = std::f32::consts::PI;
     (2.0 / pi) * (2.0 * pi * i as f32 / size as f32).sin().asin()

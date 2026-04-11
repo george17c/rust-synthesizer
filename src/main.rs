@@ -7,7 +7,7 @@ use device_query::{DeviceQuery, DeviceState, Keycode};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use classic_osc::{make_wtable, wave_sine, wave_square, wave_triangle, wave_saw};
+use classic_osc::{make_wtable, wave_sine, wave_triangle, wave_saw};
 use classic_osc::WtableOscillator;
 use pulse_osc::PulseOscillator;
 use task_manager::{TaskManager, Voice};
@@ -16,11 +16,9 @@ use adsr::AdsrEnvelope;
 fn main() {
     // calculeaza la inceput static mut _TABLE si da referintele, ca sa nu ocupe mult ram
     // let sin_table: &'static = make_wtable(wave_sine);
-    // let squ_table: &'static = make_wtable(wave_square);
     // let tri_table: &'static = make_wtable(wave_triangle);
     // let saw_table: &'static = make_wtable(wave_saw);
     let sin_table = make_wtable(wave_sine);
-    let sqr_table = make_wtable(wave_square);
     let tri_table = make_wtable(wave_triangle);
     let saw_table = make_wtable(wave_saw);
 
@@ -37,7 +35,6 @@ fn main() {
         Voice {
             pulse: PulseOscillator::new(44100, 440.0),
             sine: WtableOscillator::new(44100, sin_table),
-            square: WtableOscillator::new(44100, sqr_table),
             triangle: WtableOscillator::new(44100, tri_table),
             saw: WtableOscillator::new(44100, saw_table),
             adsr: AdsrEnvelope::new(44100),
@@ -59,30 +56,29 @@ fn main() {
     let mut current_duty: f32 = 0.5;
 
     println!("Pian: A, S, D, F, G, ...");
-    println!("Sunet: 1=Pulse, 2=Sine, 3=Square, 4=Triangle, 5=Saw");
+    println!("Sunet: 1=Pulse, 2=Sine, 3=Triangle, 4=Saw");
     println!("Pulse Width: ^ / v");
 
     loop {
         let keys = device_state.get_keys();
         let mut changed_duty = false;
 
-        if keys.contains(&Keycode::Z) { shared_scale_offset.store(0, Ordering::Relaxed); }  // E Low
-        if keys.contains(&Keycode::X) { shared_scale_offset.store(3, Ordering::Relaxed); }  // G Low
-        if keys.contains(&Keycode::C) { shared_scale_offset.store(8, Ordering::Relaxed); }  // C (Default)
-        if keys.contains(&Keycode::V) { shared_scale_offset.store(12, Ordering::Relaxed); } // E High
-        if keys.contains(&Keycode::B) { shared_scale_offset.store(15, Ordering::Relaxed); } // G High
+        if keys.contains(&Keycode::Z) { shared_scale_offset.store(0, Ordering::Relaxed); }
+        if keys.contains(&Keycode::X) { shared_scale_offset.store(12, Ordering::Relaxed); }
+        if keys.contains(&Keycode::C) { shared_scale_offset.store(24, Ordering::Relaxed); }
+        if keys.contains(&Keycode::V) { shared_scale_offset.store(36, Ordering::Relaxed); }
+        if keys.contains(&Keycode::B) { shared_scale_offset.store(48, Ordering::Relaxed); }
+        if keys.contains(&Keycode::N) { shared_scale_offset.store(60, Ordering::Relaxed); }
 
         // timbre change
         if keys.contains(&Keycode::Key1) {
             shared_mode.store(0, Ordering::Relaxed); // Switch to Pulse
         } else if keys.contains(&Keycode::Key2) {
             shared_mode.store(1, Ordering::Relaxed); // Switch to Sine
-        } else if keys.contains(&Keycode::Key3) {
-            shared_mode.store(2, Ordering::Relaxed); // Switch to Square
         } else if keys.contains(&Keycode::Key4) {
-            shared_mode.store(3, Ordering::Relaxed); // Switch to Triangle
+            shared_mode.store(2, Ordering::Relaxed); // Switch to Triangle
         } else if keys.contains(&Keycode::Key5) {
-            shared_mode.store(4, Ordering::Relaxed); // Switch to Saw
+            shared_mode.store(3, Ordering::Relaxed); // Switch to Saw
         }
 
         // duty cycle
