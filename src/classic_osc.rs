@@ -1,18 +1,22 @@
 #[derive(Clone)]
 pub struct WtableOscillator {
     sample_rate: u32,
-    wave_table: [f32; 128],
+    wave_table: &'static [f32; 128],
     idx: f32,
     idx_increment: f32,
 }
 
 impl WtableOscillator {
-    pub fn new(sample_rate: u32, wave_table: [f32; 128]) -> WtableOscillator {
+    pub fn new(sample_rate: u32, wave_table: &'static [f32; 128]) -> WtableOscillator {
         return WtableOscillator {
             sample_rate: sample_rate,
             wave_table: wave_table,
             idx: 0.0, idx_increment: 0.0,
         }
+    }
+
+    pub fn set_table(&mut self, new_table: &'static [f32; 128]) {
+        self.wave_table = new_table;
     }
 
     pub fn set_freq(&mut self, freq: f32) {

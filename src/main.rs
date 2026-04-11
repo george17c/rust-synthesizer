@@ -15,29 +15,34 @@ use adsr::AdsrEnvelope;
 
 fn main() {
     // calculeaza la inceput static mut _TABLE si da referintele, ca sa nu ocupe mult ram
+    // scapa de box leak mai incolo
     // let sin_table: &'static = make_wtable(wave_sine);
     // let tri_table: &'static = make_wtable(wave_triangle);
     // let saw_table: &'static = make_wtable(wave_saw);
-    let sin_table = make_wtable(wave_sine);
-    let tri_table = make_wtable(wave_triangle);
-    let saw_table = make_wtable(wave_saw);
+    let sin_table: &'static [f32; 128] = Box::leak(Box::new(make_wtable(wave_sine)));
+    let tri_table: &'static [f32; 128] = Box::leak(Box::new(make_wtable(wave_triangle)));
+    let saw_table: &'static [f32; 128] = Box::leak(Box::new(make_wtable(wave_saw)));
 
     let device_state = DeviceState::new();
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let sink = Sink::try_new(&stream_handle).unwrap();
 
-    let shared_mode = Arc::new(AtomicU32::new(0));
+    let shared_mode = Arc::new(AtomicU32::new(1));
     let shared_duty = Arc::new(AtomicU32::new(0.5f32.to_bits()));
     let shared_key_mask = Arc::new(AtomicU32::new(0));
-    let shared_scale_offset = Arc::new(AtomicU32::new(8));
+    let shared_scale_offset = Arc::new(AtomicU32::new(24));
+    
+    // Controale Modulator
     let shared_fm_ratio = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let shared_fm_amount = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+    let shared_mod_shape = Arc::new(AtomicU32::new(0)); // 0=Sin, 1=Tri, 2=Saw
 
+    // Variabile locale pentru UI
     let mut current_fm_ratio: f32 = 1.0;
     let mut current_fm_amt: f32 = 0.0;
+    let mut current_mod_shape: u32 = 0;
 
-    shared_scale_offset.store(24, Ordering::Relaxed);
-    shared_mode.store(1, Ordering::Relaxed);
+    let mut current_duty: f32 = 0.5;
 
     let voices: [Voice; 8] = core::array::from_fn(|_| {
         Voice {
@@ -47,16 +52,23 @@ fn main() {
             saw: WtableOscillator::new(44100, saw_table),
             modulator: WtableOscillator::new(44100, sin_table),
             adsr: AdsrEnvelope::new(44100),
-            active_freq: 0.0, active_key: 99,
+            active_freq: 0.0,
+            active_key: 99,
         }
     });
 
     let audio_task = TaskManager {
         voices,
+        sin_table,
+        tri_table,
+        saw_table,
         shared_key_mask: Arc::clone(&shared_key_mask),
-        shared_fm_ratio: Arc::clone(&shared_fm_ratio),
-        shared_fm_amount: Arc::clone(&shared_fm_amount),
-        shared_duty_bits: Arc::clone(&shared_duty),
+
+        fm_ratio: Arc::clone(&shared_fm_ratio),
+        fm_amount: Arc::clone(&shared_fm_amount),
+        mod_shape: Arc::clone(&shared_mod_shape),
+
+        shared_duty_cycle: Arc::clone(&shared_duty),
         shared_mode: Arc::clone(&shared_mode),
         shared_scale: Arc::clone(&shared_scale_offset),
         last_key_mask: 0,
@@ -64,16 +76,15 @@ fn main() {
 
     sink.append(audio_task);
 
-    let mut current_duty: f32 = 0.5;
-
-    println!("Pian: A, S, D, F, G, ...");
-    println!("Sunet: 1=Pulse, 2=Sine, 3=Triangle, 4=Saw");
-    println!("Pulse Width: ^ / v");
+    println!("Pian: A, S, D, F, G...");
+    println!(" Sunet Carrier: 1=Pulse, 2=Sine, 3=Tri, 4=Saw");
+    println!(" fm (Amount: <- / ->) | (Ratio: PgUp / PgDn) | (Forma: O)");
+    println!(" Reset FM: /");
 
     loop {
         let keys = device_state.get_keys();
         let mut changed_duty = false;
-        let mut changed_mod = false;
+        let mut changed_fm = false;
 
         if keys.contains(&Keycode::Z) { shared_scale_offset.store(0, Ordering::Relaxed); }
         if keys.contains(&Keycode::X) { shared_scale_offset.store(12, Ordering::Relaxed); }
@@ -85,16 +96,12 @@ fn main() {
         // timbre change
         if keys.contains(&Keycode::Key1) {
             shared_mode.store(0, Ordering::Relaxed); // Switch to Pulse
-            println!("select Pulse");
         } else if keys.contains(&Keycode::Key2) {
             shared_mode.store(1, Ordering::Relaxed); // Switch to Sine
-            println!("select Sine");
         } else if keys.contains(&Keycode::Key3) {
             shared_mode.store(2, Ordering::Relaxed); // Switch to Triangle
-            println!("select Triangle");
         } else if keys.contains(&Keycode::Key4) {
             shared_mode.store(3, Ordering::Relaxed); // Switch to Saw
-            println!("select Saw");
         }
 
         // duty cycle
@@ -112,17 +119,34 @@ fn main() {
             }
         }
 
-        if keys.contains(&Keycode::Left) { current_fm_amt = (current_fm_amt - 0.1).max(0.0); changed_mod = true; std::thread::sleep(Duration::from_millis(150)); }
-        if keys.contains(&Keycode::Right) { current_fm_amt = (current_fm_amt + 0.1).min(10.0); changed_mod = true; std::thread::sleep(Duration::from_millis(150)); }
+        // control fm
+        if keys.contains(&Keycode::Left) { current_fm_amt = (current_fm_amt - 0.1).max(0.0); changed_fm = true; std::thread::sleep(Duration::from_millis(50)); }
+        if keys.contains(&Keycode::Right) { current_fm_amt = (current_fm_amt + 0.1).min(10.0); changed_fm = true; std::thread::sleep(Duration::from_millis(50)); }
+        
+        if keys.contains(&Keycode::PageUp) { current_fm_ratio += 0.5; changed_fm = true; std::thread::sleep(Duration::from_millis(150)); }
+        if keys.contains(&Keycode::PageDown) { current_fm_ratio = (current_fm_ratio - 0.5).max(0.0); changed_fm = true; std::thread::sleep(Duration::from_millis(150)); }
 
-        if keys.contains(&Keycode::PageUp) { current_fm_ratio += 0.5; changed_mod = true; std::thread::sleep(Duration::from_millis(200)); }
-        if keys.contains(&Keycode::PageDown) { current_fm_ratio = (current_fm_ratio - 0.5).max(0.0); changed_mod = true; std::thread::sleep(Duration::from_millis(200)); }
-        if keys.contains(&Keycode::Slash) { println!("fm mod reset"); current_fm_ratio = 1.0; current_fm_amt = 0.0; changed_mod = true; std::thread::sleep(Duration::from_millis(200)); }
+        if keys.contains(&Keycode::O) { 
+            current_mod_shape = (current_mod_shape + 1) % 3; 
+            shared_mod_shape.store(current_mod_shape, Ordering::Relaxed);
+            changed_fm = true; 
+            std::thread::sleep(Duration::from_millis(200)); 
+        }
 
-        if changed_mod {
+        if changed_fm {
             shared_fm_amount.store(current_fm_amt.to_bits(), Ordering::Relaxed);
             shared_fm_ratio.store(current_fm_ratio.to_bits(), Ordering::Relaxed);
-            println!("FM Ratio: {:.1} | FM Amount: {:.1}", current_fm_ratio, current_fm_amt);
+            let shape_str = match current_mod_shape { 0 => "Sin", 1 => "Tri", _ => "Saw" };
+            println!("fm -> Shape: {} | Ratio: {:.1} | Amount: {:.1}", shape_str, current_fm_ratio, current_fm_amt);
+        }
+
+        // reset fm
+        if keys.contains(&Keycode::Slash) { 
+            current_fm_ratio = 1.0; current_fm_amt = 0.0;
+            shared_fm_amount.store(0.0f32.to_bits(), Ordering::Relaxed);
+            shared_fm_ratio.store(1.0f32.to_bits(), Ordering::Relaxed);
+            println!("FM Modulator Reset");
+            std::thread::sleep(Duration::from_millis(200));
         }
 
         let mut bitmask: u32 = 0;

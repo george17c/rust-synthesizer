@@ -52,11 +52,16 @@ pub struct TaskManager {
     pub voices: [Voice; 8],
     pub last_key_mask: u32,
 
-    pub shared_fm_ratio: Arc<AtomicU32>,
-    pub shared_fm_amount: Arc<AtomicU32>,
+    pub sin_table: &'static [f32; 128],
+    pub tri_table: &'static [f32; 128],
+    pub saw_table: &'static [f32; 128],
+
+    pub fm_ratio: Arc<AtomicU32>,
+    pub fm_amount: Arc<AtomicU32>,
+    pub mod_shape: Arc<AtomicU32>, // 0=Sin, 1=Tri, 2=Saw
 
     pub shared_key_mask: Arc<AtomicU32>,
-    pub shared_duty_bits: Arc<AtomicU32>,
+    pub shared_duty_cycle: Arc<AtomicU32>,
     pub shared_mode: Arc<AtomicU32>,
     pub shared_scale: Arc<AtomicU32>,
 }
@@ -65,7 +70,7 @@ impl Iterator for TaskManager {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let duty = f32::from_bits(self.shared_duty_bits.load(Ordering::Relaxed));
+        let duty = f32::from_bits(self.shared_duty_cycle.load(Ordering::Relaxed));
         let mode = self.shared_mode.load(Ordering::Relaxed);
         let current_mask = self.shared_key_mask.load(Ordering::Relaxed);
 
@@ -101,9 +106,10 @@ impl Iterator for TaskManager {
             self.last_key_mask = current_mask;
         }
 
-        // FM modulation
-        let fm_ratio = f32::from_bits(self.shared_fm_ratio.load(Ordering::Relaxed));
-        let fm_amount = f32::from_bits(self.shared_fm_amount.load(Ordering::Relaxed));
+        // Citim controalele FM 1
+        let fm_ratio = f32::from_bits(self.fm_ratio.load(Ordering::Relaxed));
+        let fm_amt = f32::from_bits(self.fm_amount.load(Ordering::Relaxed));
+        let shape = self.mod_shape.load(Ordering::Relaxed);
 
         // mix sound
         let mut mixed_sample = 0.0;
@@ -111,10 +117,12 @@ impl Iterator for TaskManager {
         for voice in self.voices.iter_mut() {
             if voice.adsr.stage != AdsrStage::Off {
                 let env_vol = voice.adsr.tick();
-                voice.modulator.set_freq(voice.active_freq * fm_ratio);
-                let mod_signal = voice.modulator.get_sample();
 
-                let modulated_freq = (voice.active_freq + (mod_signal * fm_amount * voice.active_freq)).max(1.0);
+                voice.modulator.set_table(match shape { 1 => self.tri_table, 2 => self.saw_table, _ => self.sin_table });
+                voice.modulator.set_freq(voice.active_freq * fm_ratio);
+
+                let m_sig = voice.modulator.get_sample();
+                let modulated_freq = (voice.active_freq + (m_sig * fm_amt * voice.active_freq)).max(1.0);
 
                 let raw_sample = match mode {
                     0 => {voice.pulse.set_freq(modulated_freq); voice.pulse.get_sample(duty)},
