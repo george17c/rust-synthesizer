@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use crate::pulse_osc::PulseOscillator;
 use crate::classic_osc::WtableOscillator;
+use crate::adsr::AdsrEnvelope;
+use crate::adsr::AdsrStage;
 
 pub struct TaskManager {
     pub pulse: PulseOscillator,
@@ -12,6 +14,9 @@ pub struct TaskManager {
     pub square: WtableOscillator,
     pub triangle: WtableOscillator,
     pub saw: WtableOscillator,
+
+    pub adsr: AdsrEnvelope,
+    pub shared_gate: Arc<AtomicU32>, // 0 or 1
 
     pub shared_duty_bits: Arc<AtomicU32>, 
     pub shared_freq_bits: Arc<AtomicU32>,
@@ -22,7 +27,7 @@ impl Iterator for TaskManager {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // 1. Citim valorile partajate
+        let gate = self.shared_gate.load(Ordering::Relaxed);
         let duty = f32::from_bits(self.shared_duty_bits.load(Ordering::Relaxed));
         let freq = f32::from_bits(self.shared_freq_bits.load(Ordering::Relaxed));
         let mode = self.shared_mode.load(Ordering::Relaxed);
@@ -42,7 +47,16 @@ impl Iterator for TaskManager {
             _ => 0.0,
         };
 
-        Some(sample)
+        let stage = self.adsr.get_stage();
+        if gate == 1 && stage == AdsrStage::Off {
+            self.adsr.note_on();
+        } else if gate == 0 && stage != AdsrStage::Release && stage != AdsrStage::Off {
+            self.adsr.note_off();
+        }
+
+        let envelope_volume = self.adsr.tick();
+
+        Some(sample * envelope_volume)
     }
 }
 
