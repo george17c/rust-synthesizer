@@ -10,33 +10,47 @@ use std::time::Duration;
 use classic_osc::{make_wtable, wave_sine, wave_square, wave_triangle, wave_saw};
 use classic_osc::WtableOscillator;
 use pulse_osc::PulseOscillator;
-use task_manager::TaskManager;
+use task_manager::{TaskManager, Voice};
 use adsr::AdsrEnvelope;
 
 
 fn main() {
-    let sin_osc  = WtableOscillator::new(44100, make_wtable(wave_sine));
-    let sqr_osc  = WtableOscillator::new(44100, make_wtable(wave_square));
-    let tri_osc  = WtableOscillator::new(44100, make_wtable(wave_triangle));
-    let saw_osc  = WtableOscillator::new(44100, make_wtable(wave_saw));
+    // calculeaza la inceput static mut _TABLE si da referintele, ca sa nu ocupe mult ram
+    // let sin_table: &'static = make_wtable(wave_sine);
+    // let squ_table: &'static = make_wtable(wave_square);
+    // let tri_table: &'static = make_wtable(wave_triangle);
+    // let saw_table: &'static = make_wtable(wave_saw);
+    let sin_table = make_wtable(wave_sine);
+    let sqr_table = make_wtable(wave_square);
+    let tri_table = make_wtable(wave_triangle);
+    let saw_table = make_wtable(wave_saw);
 
     let device_state = DeviceState::new();
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let sink = Sink::try_new(&stream_handle).unwrap();
 
+    let shared_mode = Arc::new(AtomicU32::new(0));
     let shared_duty = Arc::new(AtomicU32::new(0.5f32.to_bits()));
-    let shared_freq = Arc::new(AtomicU32::new(440.0f32.to_bits())); 
-    let shared_mode = Arc::new(AtomicU32::new(0)); // 0 = Pulse
-    let shared_gate = Arc::new(AtomicU32::new(0)); // Pornim de la 0
+    let shared_key_mask = Arc::new(AtomicU32::new(0));
 
-    let adsr_env = AdsrEnvelope::new(44100);
+    let voices: [Voice; 8] = core::array::from_fn(|_| {
+        Voice {
+            pulse: PulseOscillator::new(44100, 440.0),
+            sine: WtableOscillator::new(44100, sin_table),
+            square: WtableOscillator::new(44100, sqr_table),
+            triangle: WtableOscillator::new(44100, tri_table),
+            saw: WtableOscillator::new(44100, saw_table),
+            adsr: AdsrEnvelope::new(44100),
+            active_freq: 0.0,
+        }
+    });
+
     let audio_task = TaskManager {
-        pulse: PulseOscillator::new(44100, 440.0),
-        sine: sin_osc, square: sqr_osc, triangle: tri_osc, saw: saw_osc,
-        adsr: adsr_env, shared_gate: Arc::clone(&shared_gate),
+        voices,
+        shared_key_mask: Arc::clone(&shared_key_mask),
         shared_duty_bits: Arc::clone(&shared_duty),
-        shared_freq_bits: Arc::clone(&shared_freq),
         shared_mode: Arc::clone(&shared_mode),
+        last_key_mask: 0,
     };
 
     sink.append(audio_task);
@@ -50,9 +64,8 @@ fn main() {
     loop {
         let keys = device_state.get_keys();
         let mut changed_duty = false;
-        let mut note_pressed = false;
 
-        // --- SCHIMBARE TIMBRU (Switch Oscilatoare) ---
+        // timbre change
         if keys.contains(&Keycode::Key1) {
             shared_mode.store(0, Ordering::Relaxed); // Switch to Pulse
         } else if keys.contains(&Keycode::Key2) {
@@ -65,42 +78,41 @@ fn main() {
             shared_mode.store(4, Ordering::Relaxed); // Switch to Saw
         }
 
-        // --- CONTROL DUTY CYCLE ---
-        if keys.contains(&Keycode::Up) {
-            current_duty = (current_duty + 0.01).min(0.95);
-            changed_duty = true;
-        }
-        if keys.contains(&Keycode::Down) {
-            current_duty = (current_duty - 0.01).max(0.05);
-            changed_duty = true;
-        }
-        if changed_duty {
-            shared_duty.store(current_duty.to_bits(), Ordering::Relaxed);
+        // duty cycle
+        if shared_mode.load(Ordering::Relaxed) == 0 {
+            if keys.contains(&Keycode::Up) {
+                current_duty = (current_duty + 0.01).min(0.95);
+                changed_duty = true;
+            }
+            if keys.contains(&Keycode::Down) {
+                current_duty = (current_duty - 0.01).max(0.50);
+                changed_duty = true;
+            }
+            if changed_duty {
+                shared_duty.store(current_duty.to_bits(), Ordering::Relaxed);
+            }
         }
 
-        // --- CONTROL PITCH ---
-        if keys.contains(&Keycode::A) { shared_freq.store(261.63f32.to_bits(), Ordering::Relaxed); note_pressed = true} // C
-        if keys.contains(&Keycode::W) { shared_freq.store(277.18f32.to_bits(), Ordering::Relaxed); note_pressed = true} // C#
-        if keys.contains(&Keycode::S) { shared_freq.store(293.66f32.to_bits(), Ordering::Relaxed); note_pressed = true} // D
-        if keys.contains(&Keycode::E) { shared_freq.store(311.13f32.to_bits(), Ordering::Relaxed); note_pressed = true} // D#
-        if keys.contains(&Keycode::D) { shared_freq.store(329.63f32.to_bits(), Ordering::Relaxed); note_pressed = true} // E
-        if keys.contains(&Keycode::F) { shared_freq.store(349.23f32.to_bits(), Ordering::Relaxed); note_pressed = true} // F
-        if keys.contains(&Keycode::T) { shared_freq.store(369.99f32.to_bits(), Ordering::Relaxed); note_pressed = true} // F#
-        if keys.contains(&Keycode::G) { shared_freq.store(392.00f32.to_bits(), Ordering::Relaxed); note_pressed = true} // G
-        if keys.contains(&Keycode::Y) { shared_freq.store(415.30f32.to_bits(), Ordering::Relaxed); note_pressed = true} // G#
-        if keys.contains(&Keycode::H) { shared_freq.store(440.00f32.to_bits(), Ordering::Relaxed); note_pressed = true} // A
-        if keys.contains(&Keycode::U) { shared_freq.store(466.16f32.to_bits(), Ordering::Relaxed); note_pressed = true} // A#
-        if keys.contains(&Keycode::J) { shared_freq.store(493.88f32.to_bits(), Ordering::Relaxed); note_pressed = true} // B
-        if keys.contains(&Keycode::K) { shared_freq.store(523.25f32.to_bits(), Ordering::Relaxed); note_pressed = true} // C
+        let mut bitmask: u32 = 0;
+
+        if keys.contains(&Keycode::A) { bitmask |= 1 << 0; }  // C
+        if keys.contains(&Keycode::W) { bitmask |= 1 << 1; }  // C#
+        if keys.contains(&Keycode::S) { bitmask |= 1 << 2; }  // D
+        if keys.contains(&Keycode::E) { bitmask |= 1 << 3; }  // D#
+        if keys.contains(&Keycode::D) { bitmask |= 1 << 4; }  // E
+        if keys.contains(&Keycode::F) { bitmask |= 1 << 5; }  // F
+        if keys.contains(&Keycode::T) { bitmask |= 1 << 6; }  // F#
+        if keys.contains(&Keycode::G) { bitmask |= 1 << 7; }  // G
+        if keys.contains(&Keycode::Y) { bitmask |= 1 << 8; }  // G#
+        if keys.contains(&Keycode::H) { bitmask |= 1 << 9; }  // A
+        if keys.contains(&Keycode::U) { bitmask |= 1 << 10; } // A#
+        if keys.contains(&Keycode::J) { bitmask |= 1 << 11; } // B
+        if keys.contains(&Keycode::K) { bitmask |= 1 << 12; } // C
+
+        shared_key_mask.store(bitmask, Ordering::Relaxed);
 
         if keys.contains(&Keycode::Escape) { break; }
 
-        if note_pressed {
-            shared_gate.store(1, Ordering::Relaxed);
-        } else {
-            shared_gate.store(0, Ordering::Relaxed);
-        }
-
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(5));
     }
 }

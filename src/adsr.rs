@@ -8,7 +8,7 @@ pub enum AdsrStage {
 }
 
 pub struct AdsrEnvelope {
-    stage: AdsrStage,
+    pub stage: AdsrStage,
     value: f32,
     sample_rate: f32,
 
@@ -24,15 +24,11 @@ impl AdsrEnvelope {
             stage: AdsrStage::Off,
             value: 0.0,
             sample_rate: sample_rate as f32,
-            attack_time: 0.01,  // 10ms
-            decay_time: 0.1,   // 100ms
-            sustain_level: 0.7, // 70%
-            release_time: 0.2,
+            attack_time: 0.05,
+            decay_time: 0.1,
+            sustain_level: 0.7,
+            release_time: 0.3,
         }
-    }
-
-    pub fn get_stage(&self) -> AdsrStage {
-        return self.stage;
     }
 
     pub fn note_on(&mut self) { self.stage = AdsrStage::Attack; }
