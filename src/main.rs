@@ -13,7 +13,6 @@ use pulse_osc::PulseOscillator;
 use task_manager::{TaskManager, Voice};
 use adsr::AdsrEnvelope;
 
-
 fn main() {
     // calculeaza la inceput static mut _TABLE si da referintele, ca sa nu ocupe mult ram
     // let sin_table: &'static = make_wtable(wave_sine);
@@ -32,6 +31,7 @@ fn main() {
     let shared_mode = Arc::new(AtomicU32::new(0));
     let shared_duty = Arc::new(AtomicU32::new(0.5f32.to_bits()));
     let shared_key_mask = Arc::new(AtomicU32::new(0));
+    let shared_scale_offset = Arc::new(AtomicU32::new(8));
 
     let voices: [Voice; 8] = core::array::from_fn(|_| {
         Voice {
@@ -50,6 +50,7 @@ fn main() {
         shared_key_mask: Arc::clone(&shared_key_mask),
         shared_duty_bits: Arc::clone(&shared_duty),
         shared_mode: Arc::clone(&shared_mode),
+        shared_scale: Arc::clone(&shared_scale_offset),
         last_key_mask: 0,
     };
 
@@ -64,6 +65,12 @@ fn main() {
     loop {
         let keys = device_state.get_keys();
         let mut changed_duty = false;
+
+        if keys.contains(&Keycode::Z) { shared_scale_offset.store(0, Ordering::Relaxed); }  // E Low
+        if keys.contains(&Keycode::X) { shared_scale_offset.store(3, Ordering::Relaxed); }  // G Low
+        if keys.contains(&Keycode::C) { shared_scale_offset.store(8, Ordering::Relaxed); }  // C (Default)
+        if keys.contains(&Keycode::V) { shared_scale_offset.store(12, Ordering::Relaxed); } // E High
+        if keys.contains(&Keycode::B) { shared_scale_offset.store(15, Ordering::Relaxed); } // G High
 
         // timbre change
         if keys.contains(&Keycode::Key1) {

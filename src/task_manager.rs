@@ -8,9 +8,10 @@ use crate::classic_osc::WtableOscillator;
 use crate::adsr::AdsrEnvelope;
 use crate::adsr::AdsrStage;
 
-const FREQS: [f32; 13] = [
-    261.63, 277.18, 293.66, 311.13, 329.63, 349.23, 369.99, 
-    392.00, 415.30, 440.00, 466.16, 493.88, 523.25
+const FREQS: [f32; 28] = [
+    164.81, 174.61, 185.00, 196.00, 207.65, 220.00, 233.08, 246.94, 
+    261.63, 277.18, 293.66, 311.13, 329.63, 349.23, 369.99, 392.00, 415.30, 440.00, 466.16, 493.88, 523.25,
+    554.37, 587.33, 622.25, 659.25, 698.46, 739.99, 783.99
 ];
 
 pub struct Voice {
@@ -41,6 +42,7 @@ pub struct TaskManager {
     pub shared_key_mask: Arc<AtomicU32>,
     pub shared_duty_bits: Arc<AtomicU32>,
     pub shared_mode: Arc<AtomicU32>,
+    pub shared_scale: Arc<AtomicU32>,
 }
 
 impl Iterator for TaskManager {
@@ -52,11 +54,13 @@ impl Iterator for TaskManager {
         let current_mask = self.shared_key_mask.load(Ordering::Relaxed);
 
         // detect pressed keys
+        let offset = self.shared_scale.load(Ordering::Relaxed) as usize;
+
         if current_mask != self.last_key_mask {
             for i in 0..13 {
                 let is_pressed = (current_mask & (1 << i)) != 0;
                 let was_pressed = (self.last_key_mask & (1 << i)) != 0;
-                let freq = FREQS[i];
+                let freq = FREQS[i + offset];
 
                 if is_pressed && !was_pressed {
                     // NOTE ON: Căutăm o voce liberă
