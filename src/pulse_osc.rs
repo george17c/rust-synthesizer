@@ -5,11 +5,11 @@ pub struct PulseOscillator {
 }
 
 impl PulseOscillator {
-    pub fn new(sample_rate: u32, freq: f32) -> PulseOscillator {
+    pub fn new(sample_rate: u32) -> PulseOscillator {
         PulseOscillator {
             sample_rate,
             phase: 0.0,
-            phase_increment: freq / sample_rate as f32,
+            phase_increment: 0.0,
         }
     }
 

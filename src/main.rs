@@ -31,9 +31,12 @@ fn main() {
     let shared_key_mask = Arc::new(AtomicU32::new(0));
     let shared_scale_offset = Arc::new(AtomicU32::new(8));
 
+    shared_scale_offset.store(24, Ordering::Relaxed);
+    shared_mode.store(1, Ordering::Relaxed);
+
     let voices: [Voice; 8] = core::array::from_fn(|_| {
         Voice {
-            pulse: PulseOscillator::new(44100, 440.0),
+            pulse: PulseOscillator::new(44100),
             sine: WtableOscillator::new(44100, sin_table),
             triangle: WtableOscillator::new(44100, tri_table),
             saw: WtableOscillator::new(44100, saw_table),
@@ -75,9 +78,9 @@ fn main() {
             shared_mode.store(0, Ordering::Relaxed); // Switch to Pulse
         } else if keys.contains(&Keycode::Key2) {
             shared_mode.store(1, Ordering::Relaxed); // Switch to Sine
-        } else if keys.contains(&Keycode::Key4) {
+        } else if keys.contains(&Keycode::Key3) {
             shared_mode.store(2, Ordering::Relaxed); // Switch to Triangle
-        } else if keys.contains(&Keycode::Key5) {
+        } else if keys.contains(&Keycode::Key4) {
             shared_mode.store(3, Ordering::Relaxed); // Switch to Saw
         }
 
