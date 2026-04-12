@@ -3,7 +3,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::pulse_osc::PulseOscillator;
+use crate::classic_osc::WtableUnison;
+use crate::pulse_osc::PulseUnison;
 use crate::classic_osc::WtableOscillator;
 use crate::adsr::AdsrEnvelope;
 use crate::adsr::AdsrStage;
@@ -26,10 +27,8 @@ const FREQS: [f32; 73] = [
 ];
 
 pub struct Voice {
-    pub pulse: PulseOscillator,
-    pub sine: WtableOscillator,
-    pub triangle: WtableOscillator,
-    pub saw: WtableOscillator,
+    pub table_unison: WtableUnison,
+    pub pulse_unison: PulseUnison,
 
     pub modulator: WtableOscillator,
 
@@ -39,27 +38,29 @@ pub struct Voice {
 }
 
 impl Voice {
-    pub fn set_freq(&mut self, freq: f32) {
+    pub fn set_freq(&mut self, freq: f32, detune: f32) {
         self.active_freq = freq;
-        self.pulse.set_freq(freq);
-        self.sine.set_freq(freq);
-        self.triangle.set_freq(freq);
-        self.saw.set_freq(freq);
+        self.pulse_unison.set_freq_and_detune(freq, detune);
+        self.table_unison.set_freq_and_detune(freq, detune);
     }
 }
 
 pub struct TaskManager {
     pub voices: [Voice; 8],
-    pub last_key_mask: u32,
+    pub shared_unison_voice_cnt: Arc<AtomicU32>,
+    pub shared_detune: Arc<AtomicU32>,
 
     pub sin_table: &'static [f32; 128],
     pub tri_table: &'static [f32; 128],
     pub saw_table: &'static [f32; 128],
-
+    
     pub fm_ratio: Arc<AtomicU32>,
     pub fm_amount: Arc<AtomicU32>,
-    pub mod_shape: Arc<AtomicU32>, // 0=Sin, 1=Tri, 2=Saw
 
+    // 0=Sin, 1=Tri, 2=Saw
+    pub mod_shape: Arc<AtomicU32>,
+
+    pub last_key_mask: u32,
     pub shared_key_mask: Arc<AtomicU32>,
     pub shared_duty_cycle: Arc<AtomicU32>,
     pub shared_mode: Arc<AtomicU32>,
@@ -74,6 +75,8 @@ impl Iterator for TaskManager {
         let mode = self.shared_mode.load(Ordering::Relaxed);
         let current_mask = self.shared_key_mask.load(Ordering::Relaxed);
 
+        let detune_amt = self.shared_detune.load(Ordering::Relaxed) as f32 / 1000.0;
+
         // detect pressed keys
         let offset = self.shared_scale.load(Ordering::Relaxed) as usize;
 
@@ -87,7 +90,7 @@ impl Iterator for TaskManager {
                     // NOTE ON: Căutăm o voce liberă
                     for voice in self.voices.iter_mut() {
                         if voice.adsr.stage == AdsrStage::Off {
-                            voice.set_freq(freq);
+                            voice.set_freq(freq, detune_amt);
                             voice.adsr.note_on();
                             voice.active_key = i;
                             break;
@@ -106,10 +109,12 @@ impl Iterator for TaskManager {
             self.last_key_mask = current_mask;
         }
 
-        // Citim controalele FM 1
+        // read fm controls
         let fm_ratio = f32::from_bits(self.fm_ratio.load(Ordering::Relaxed));
         let fm_amt = f32::from_bits(self.fm_amount.load(Ordering::Relaxed));
         let shape = self.mod_shape.load(Ordering::Relaxed);
+
+        let voices_count = self.shared_unison_voice_cnt.load(Ordering::Relaxed) as usize;
 
         // mix sound
         let mut mixed_sample = 0.0;
@@ -118,17 +123,35 @@ impl Iterator for TaskManager {
             if voice.adsr.stage != AdsrStage::Off {
                 let env_vol = voice.adsr.tick();
 
+                voice.pulse_unison.active_voices = voices_count;
+                voice.table_unison.active_voices = voices_count;
+
                 voice.modulator.set_table(match shape { 1 => self.tri_table, 2 => self.saw_table, _ => self.sin_table });
                 voice.modulator.set_freq(voice.active_freq * fm_ratio);
 
-                let m_sig = voice.modulator.get_sample();
+                let mut m_sig = voice.modulator.get_sample();
+
+                // for pitch shift effect
+                if fm_ratio == 0.0 {
+                    m_sig = 1.0;
+                }
+
                 let modulated_freq = (voice.active_freq + (m_sig * fm_amt * voice.active_freq)).max(1.0);
 
                 let raw_sample = match mode {
-                    0 => {voice.pulse.set_freq(modulated_freq); voice.pulse.get_sample(duty)},
-                    1 => {voice.sine.set_freq(modulated_freq); voice.sine.get_sample()},
-                    2 => {voice.triangle.set_freq(modulated_freq); voice.triangle.get_sample()},
-                    3 => {voice.saw.set_freq(modulated_freq); voice.saw.get_sample()},
+                    // Pulse
+                    0 => {
+                        voice.pulse_unison.set_freq_and_detune(modulated_freq, detune_amt);
+                        voice.pulse_unison.get_sample(duty)
+                    },
+
+                    // Sine, Tri, Saw
+                    1..=3 => {
+                        let table = match mode { 1 => self.sin_table, 2 => self.tri_table, _ => self.saw_table };
+                        voice.table_unison.set_table(table);
+                        voice.table_unison.set_freq_and_detune(modulated_freq, detune_amt);
+                        voice.table_unison.get_sample()
+                    },
                     _ => 0.0,
                 };
                 mixed_sample += raw_sample * env_vol;
@@ -141,7 +164,7 @@ impl Iterator for TaskManager {
 
 impl Source for TaskManager {
     fn channels(&self) -> u16 { 1 }
-    fn sample_rate(&self) -> u32 { self.voices[0].pulse.sample_rate }
+    fn sample_rate(&self) -> u32 { 44100 }
     fn current_frame_len(&self) -> Option<usize> { None }
     fn total_duration(&self) -> Option<Duration> { None }
 }

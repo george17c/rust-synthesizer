@@ -60,3 +60,41 @@ pub fn make_wtable(func: fn(usize, usize) -> f32) -> [f32; 128] {
     let size: usize = 128;
     core::array::from_fn(|i| func(i, size))
 }
+
+pub struct WtableUnison {
+    oscs: [WtableOscillator; 5],
+    pub active_voices: usize,
+}
+
+impl WtableUnison {
+    pub fn new(sample_rate: u32, table: &'static [f32; 128]) -> Self {
+        Self {
+            oscs: core::array::from_fn(|_| WtableOscillator::new(sample_rate, table)),
+            active_voices: 1,
+        }
+    }
+
+    pub fn set_table(&mut self, table: &'static [f32; 128]) {
+        for osc in self.oscs.iter_mut() { osc.set_table(table); }
+    }
+
+    pub fn set_freq_and_detune(&mut self, base_freq: f32, detune: f32) {
+        if self.active_voices <= 1 {
+            self.oscs[0].set_freq(base_freq);
+            return;
+        }
+        let center = (self.active_voices - 1) as f32 / 2.0;
+        for i in 0..self.active_voices {
+            let step = i as f32 - center;
+            self.oscs[i].set_freq(base_freq * (1.0 + step * detune));
+        }
+    }
+
+    pub fn get_sample(&mut self) -> f32 {
+        let mut sum = 0.0;
+        for i in 0..self.active_voices {
+            sum += self.oscs[i].get_sample();
+        }
+        sum / (self.active_voices as f32)
+    }
+}

@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use classic_osc::{make_wtable, wave_sine, wave_triangle, wave_saw};
-use classic_osc::WtableOscillator;
-use pulse_osc::PulseOscillator;
+use classic_osc::{WtableOscillator, WtableUnison};
+use pulse_osc::{PulseUnison};
 use task_manager::{TaskManager, Voice};
 use adsr::AdsrEnvelope;
 
@@ -31,7 +31,9 @@ fn main() {
     let shared_duty = Arc::new(AtomicU32::new(0.5f32.to_bits()));
     let shared_key_mask = Arc::new(AtomicU32::new(0));
     let shared_scale_offset = Arc::new(AtomicU32::new(24));
-    
+    let shared_unison_voice_cnt = Arc::new(AtomicU32::new(1));
+    let shared_detune = Arc::new(AtomicU32::new(0));
+
     // Controale Modulator
     let shared_fm_ratio = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let shared_fm_amount = Arc::new(AtomicU32::new(0.0f32.to_bits()));
@@ -41,15 +43,13 @@ fn main() {
     let mut current_fm_ratio: f32 = 1.0;
     let mut current_fm_amt: f32 = 0.0;
     let mut current_mod_shape: u32 = 0;
-
+    let mut current_detune: u32 = 0;
     let mut current_duty: f32 = 0.5;
 
     let voices: [Voice; 8] = core::array::from_fn(|_| {
         Voice {
-            pulse: PulseOscillator::new(44100),
-            sine: WtableOscillator::new(44100, sin_table),
-            triangle: WtableOscillator::new(44100, tri_table),
-            saw: WtableOscillator::new(44100, saw_table),
+            table_unison: WtableUnison::new(44100, sin_table),
+            pulse_unison: PulseUnison::new(44100),
             modulator: WtableOscillator::new(44100, sin_table),
             adsr: AdsrEnvelope::new(44100),
             active_freq: 0.0,
@@ -59,25 +59,29 @@ fn main() {
 
     let audio_task = TaskManager {
         voices,
+        shared_unison_voice_cnt: Arc::clone(&shared_unison_voice_cnt),
+        shared_detune: Arc::clone(&shared_detune),
         sin_table,
         tri_table,
         saw_table,
-        shared_key_mask: Arc::clone(&shared_key_mask),
-
+        
         fm_ratio: Arc::clone(&shared_fm_ratio),
         fm_amount: Arc::clone(&shared_fm_amount),
         mod_shape: Arc::clone(&shared_mod_shape),
-
+        
+        last_key_mask: 0,
+        shared_key_mask: Arc::clone(&shared_key_mask),
         shared_duty_cycle: Arc::clone(&shared_duty),
         shared_mode: Arc::clone(&shared_mode),
         shared_scale: Arc::clone(&shared_scale_offset),
-        last_key_mask: 0,
     };
 
     sink.append(audio_task);
 
     println!("Pian: A, S, D, F, G...");
-    println!(" Sunet Carrier: 1=Pulse, 2=Sine, 3=Tri, 4=Saw");
+    println!(" Sunet Carrier: 7=Pulse, 8=Sine, 9=Tri, 0=Saw");
+    println!(" Voices: 1, 3, 5");
+    println!(" Detune: -/=");
     println!(" fm (Amount: <- / ->) | (Ratio: PgUp / PgDn) | (Forma: O)");
     println!(" Reset FM: /");
 
@@ -93,15 +97,67 @@ fn main() {
         if keys.contains(&Keycode::B) { shared_scale_offset.store(48, Ordering::Relaxed); }
         if keys.contains(&Keycode::N) { shared_scale_offset.store(60, Ordering::Relaxed); }
 
+        if keys.contains(&Keycode::F3) {
+            println!("Pian: A, S, D, F, G...");
+            println!(" Sunet Carrier: 7=Pulse, 8=Sine, 9=Tri, 0=Saw");
+            println!(" Voices: 1, 3, 5");
+            println!(" Detune: -/=");
+            println!(" fm (Amount: <- / ->) | (Ratio: PgUp / PgDn) | (Forma: O)");
+            println!(" Reset FM: /");
+            std::thread::sleep(Duration::from_millis(500));
+        }
+
         // timbre change
-        if keys.contains(&Keycode::Key1) {
+        if keys.contains(&Keycode::Key7) {
             shared_mode.store(0, Ordering::Relaxed); // Switch to Pulse
-        } else if keys.contains(&Keycode::Key2) {
+            println!("Mode: Pulse");
+            std::thread::sleep(Duration::from_millis(150));
+        } else if keys.contains(&Keycode::Key8) {
             shared_mode.store(1, Ordering::Relaxed); // Switch to Sine
-        } else if keys.contains(&Keycode::Key3) {
+            println!("Mode: Sine");
+            std::thread::sleep(Duration::from_millis(150));
+        } else if keys.contains(&Keycode::Key9) {
             shared_mode.store(2, Ordering::Relaxed); // Switch to Triangle
-        } else if keys.contains(&Keycode::Key4) {
+            println!("Mode: Triangle");
+            std::thread::sleep(Duration::from_millis(150));
+        } else if keys.contains(&Keycode::Key0) {
             shared_mode.store(3, Ordering::Relaxed); // Switch to Saw
+            println!("Mode: Saw");
+            std::thread::sleep(Duration::from_millis(150));
+        }
+
+        if keys.contains(&Keycode::Key1) {
+            shared_unison_voice_cnt.store(1, Ordering::Relaxed); 
+            println!("Unison: 1 voce");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if keys.contains(&Keycode::Key3) {
+            shared_unison_voice_cnt.store(3, Ordering::Relaxed);
+            println!("Unison: 3 voci");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if keys.contains(&Keycode::Key5) {
+            shared_unison_voice_cnt.store(5, Ordering::Relaxed);
+            println!("Unison: 5 voci");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        // detune control
+        if keys.contains(&Keycode::Minus) {
+            if current_detune <= 5 {
+                current_detune = 0;
+            } else {
+                current_detune -= 5;
+            }
+            shared_detune.store(current_detune, Ordering::Relaxed);
+            println!("Detune amount: {}", current_detune as f32 / 1000.0);
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if keys.contains(&Keycode::Equal) {
+            current_detune = (current_detune + 5).min(500);
+            shared_detune.store(current_detune, Ordering::Relaxed);
+            println!("Detune amount: {}", current_detune as f32 / 1000.0);
+            std::thread::sleep(Duration::from_millis(50));
         }
 
         // duty cycle
@@ -120,9 +176,9 @@ fn main() {
         }
 
         // control fm
-        if keys.contains(&Keycode::Left) { current_fm_amt = (current_fm_amt - 0.1).max(0.0); changed_fm = true; std::thread::sleep(Duration::from_millis(50)); }
-        if keys.contains(&Keycode::Right) { current_fm_amt = (current_fm_amt + 0.1).min(10.0); changed_fm = true; std::thread::sleep(Duration::from_millis(50)); }
-        
+        if keys.contains(&Keycode::Left) { current_fm_amt = (current_fm_amt - 1.0).max(0.0); changed_fm = true; std::thread::sleep(Duration::from_millis(30)); }
+        if keys.contains(&Keycode::Right) { current_fm_amt = (current_fm_amt + 1.0).min(16.0); changed_fm = true; std::thread::sleep(Duration::from_millis(30)); }
+
         if keys.contains(&Keycode::PageUp) { current_fm_ratio += 0.5; changed_fm = true; std::thread::sleep(Duration::from_millis(150)); }
         if keys.contains(&Keycode::PageDown) { current_fm_ratio = (current_fm_ratio - 0.5).max(0.0); changed_fm = true; std::thread::sleep(Duration::from_millis(150)); }
 
