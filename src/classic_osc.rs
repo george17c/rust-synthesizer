@@ -95,6 +95,6 @@ impl WtableUnison {
         for i in 0..self.active_voices {
             sum += self.oscs[i].get_sample();
         }
-        sum / (self.active_voices as f32)
+        2.0 * sum / (self.active_voices as f32 + 1.0)
     }
 }

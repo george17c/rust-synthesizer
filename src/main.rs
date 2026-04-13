@@ -105,6 +105,7 @@ fn main() {
     println!(" Filter: type: F2, cutoff: 2/4 | resonance: F5/F6 | envelope: F7/F8");
 
     let mut times = 0;
+    let mut sample = false;
 
     loop {
         let keys = device_state.get_keys();
@@ -229,26 +230,26 @@ fn main() {
 
         // update filter cutoff
         if keys.contains(&Keycode::Key4) {
-            current_cutoff = (current_cutoff + 0.01).min(1.0);
+            current_cutoff = (current_cutoff + 0.02).min(1.0);
             cutoff.store(current_cutoff.to_bits(), Ordering::Relaxed);
             println!("cutoff: {}", current_cutoff);
             std::thread::sleep(Duration::from_millis(10));
         }
         if keys.contains(&Keycode::Key2) {
-            current_cutoff = (current_cutoff - 0.01).max(0.0);
+            current_cutoff = (current_cutoff - 0.02).max(0.0);
             cutoff.store(current_cutoff.to_bits(), Ordering::Relaxed);
             println!("cutoff: {}", current_cutoff);
             std::thread::sleep(Duration::from_millis(10));
         }
         // update filter resonance
         if keys.contains(&Keycode::F6) {
-            current_res = (current_res + 0.01).min(1.0);
+            current_res = (current_res + 0.02).min(1.0);
             shared_filter_res.store(current_res.to_bits(), Ordering::Relaxed);
             println!("Resonance: {:.2}", current_res);
             std::thread::sleep(Duration::from_millis(10));
         }
         if keys.contains(&Keycode::F5) {
-            current_res = (current_res - 0.01).max(0.0);
+            current_res = (current_res - 0.02).max(0.0);
             shared_filter_res.store(current_res.to_bits(), Ordering::Relaxed);
             println!("Resonance: {:.2}", current_res);
             std::thread::sleep(Duration::from_millis(10));
@@ -266,16 +267,16 @@ fn main() {
             std::thread::sleep(Duration::from_millis(200));
         }
         if keys.contains(&Keycode::F8) {
-            current_filter_env_amt = (current_filter_env_amt + 0.01).min(1.0);
+            current_filter_env_amt = (current_filter_env_amt + 0.02).min(1.0);
             shared_filter_env_amt.store(current_filter_env_amt.to_bits(), Ordering::Relaxed);
             println!("Filter Env Amount: {:.2}", current_filter_env_amt);
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(10));
         }
         if keys.contains(&Keycode::F7) {
-            current_filter_env_amt = (current_filter_env_amt - 0.01).max(0.0);
+            current_filter_env_amt = (current_filter_env_amt - 0.02).max(0.0);
             shared_filter_env_amt.store(current_filter_env_amt.to_bits(), Ordering::Relaxed);
             println!("Filter Env Amount: {:.2}", current_filter_env_amt);
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(10));
         }
 
         let mut bitmask: u32 = 0;
@@ -293,25 +294,37 @@ fn main() {
         if keys.contains(&Keycode::U) { bitmask |= 1 << 10; } // A#
         if keys.contains(&Keycode::J) { bitmask |= 1 << 11; } // B
         if keys.contains(&Keycode::K) { bitmask |= 1 << 12; } // C
-
-        // 3 notes at close intervals
-        if times % 81 == 0 {
-            times = 0;
+        if keys.contains(&Keycode::Q) {
+            if sample == true {
+                sample = false;
+            } else {
+                sample = true;
+            }
+            std::thread::sleep(Duration::from_millis(30));
         }
-        if times >= 60 && (times - 60) % 7 == 0 {
-            // bitmask |= 1 << 0;
+
+        if sample == true {
+            // 5 notes at close intervals
+            if times % 78 == 0 {
+                times = 0;
+            }
+            if times >= 40 && (times - 40) % 9 == 0 {
+                bitmask |= 1 << 0;
+            }
         }
 
         shared_key_mask.store(bitmask, Ordering::Relaxed);
 
         if keys.contains(&Keycode::Escape) { break; }
 
-        if times >= 60 && (times - 60) % 7 == 0 {
-            // std::thread::sleep(Duration::from_millis(100));
+        if sample == true {
+            if times >= 40 && (times - 40) % 9 == 0 {
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            times += 1;
         }
 
         std::thread::sleep(Duration::from_millis(10));
-        times += 1;
 
     }
 }
