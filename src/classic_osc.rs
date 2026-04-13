@@ -15,6 +15,8 @@ impl WtableOscillator {
         }
     }
 
+    pub fn reset_phase(&mut self) { self.idx = 0.0; }
+
     pub fn set_table(&mut self, new_table: &'static [f32; 128]) {
         self.wave_table = new_table;
     }

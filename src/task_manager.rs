@@ -9,6 +9,7 @@ use crate::classic_osc::WtableOscillator;
 use crate::adsr::AdsrEnvelope;
 use crate::adsr::AdsrStage;
 use crate::svf_filter::SvfFilter;
+use crate::drums::KickDrum;
 
 const FREQS: [f32; 73] = [
     // C1 - B1
@@ -48,7 +49,7 @@ impl Voice {
 }
 
 pub struct TaskManager {
-    pub voices: [Voice; 8],
+    pub voices: [Voice; 5],
     pub shared_unison_voice_cnt: Arc<AtomicU32>,
     pub shared_detune: Arc<AtomicU32>,
 
@@ -67,6 +68,11 @@ pub struct TaskManager {
     // 0=Sin, 1=Tri, 2=Saw
     pub mod_shape: Arc<AtomicU32>,
 
+    // drums
+    pub shared_drum_mask: Arc<AtomicU32>,
+    pub last_drum_mask: u32,
+    pub kick: KickDrum,
+
     pub last_key_mask: u32,
     pub shared_key_mask: Arc<AtomicU32>,
     pub shared_duty_cycle: Arc<AtomicU32>,
@@ -81,11 +87,20 @@ impl Iterator for TaskManager {
         let duty = f32::from_bits(self.shared_duty_cycle.load(Ordering::Relaxed));
         let mode = self.shared_mode.load(Ordering::Relaxed);
         let current_mask = self.shared_key_mask.load(Ordering::Relaxed);
+        let drum_mask = self.shared_drum_mask.load(Ordering::Relaxed);
 
         let detune_amt = self.shared_detune.load(Ordering::Relaxed) as f32 / 1000.0;
 
         // detect pressed keys
         let offset = self.shared_scale.load(Ordering::Relaxed) as usize;
+
+        // detect drums
+        if drum_mask != self.last_drum_mask {
+            if (drum_mask & (1 << 0)) != 0 && (self.last_drum_mask & (1 << 0)) == 0 { 
+                self.kick.trigger(); 
+            }
+            self.last_drum_mask = drum_mask;
+        }
 
         if current_mask != self.last_key_mask {
             for i in 0..13 {
@@ -145,9 +160,7 @@ impl Iterator for TaskManager {
                 let mut m_sig = voice.modulator.get_sample();
 
                 // for pitch shift effect
-                if fm_ratio == 0.0 {
-                    m_sig = 1.0;
-                }
+                if fm_ratio == 0.0 { m_sig = 1.0; }
 
                 let modulated_freq = (voice.active_freq + (m_sig * fm_amt * voice.active_freq)).max(1.0);
 
@@ -169,7 +182,8 @@ impl Iterator for TaskManager {
                 };
 
                 let dynamic_cutoff = (cutoff + (env_vol * filter_env_amt)).clamp(0.0, 1.0);
-                let (low_pass, high_pass, band_pass) = voice.filter.process(raw_sample, dynamic_cutoff, resonance);
+                let (low_pass, high_pass, band_pass) =
+                    voice.filter.process(raw_sample, dynamic_cutoff, resonance);
 
                 let filtered_sample = match filter_type {
                     0 => low_pass,
@@ -182,7 +196,9 @@ impl Iterator for TaskManager {
             }
         }
 
-        Some(mixed_sample * 0.125)
+        mixed_sample += self.kick.get_sample();
+
+        Some(mixed_sample * 0.25)
     }
 }
 

@@ -1,3 +1,4 @@
+mod drums;
 mod svf_filter;
 mod classic_osc;
 mod pulse_osc;
@@ -13,6 +14,7 @@ use classic_osc::{WtableOscillator, WtableUnison};
 use pulse_osc::{PulseUnison};
 use task_manager::{TaskManager, Voice};
 use adsr::AdsrEnvelope;
+use crate::drums::KickDrum;
 use crate::svf_filter::SvfFilter;
 
 
@@ -39,6 +41,7 @@ fn main() {
     let shared_filter_type= Arc::new(AtomicU32::new(3)); // 0-cutoff  1-high  2-band  3-no filter
     let shared_filter_res = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let shared_filter_env_amt = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+    let shared_drum_mask = Arc::new(AtomicU32::new(0));
 
     // Controale Modulator
     let shared_fm_ratio = Arc::new(AtomicU32::new(1.0f32.to_bits()));
@@ -57,7 +60,7 @@ fn main() {
     let mut current_res: f32 = 1.0;
     let mut current_filter_env_amt: f32 = 1.0;
 
-    let voices: [Voice; 8] = core::array::from_fn(|_| {
+    let voices: [Voice; 5] = core::array::from_fn(|_| {
         Voice {
             table_unison: WtableUnison::new(44100, sin_table),
             pulse_unison: PulseUnison::new(44100),
@@ -86,7 +89,11 @@ fn main() {
         fm_ratio: Arc::clone(&shared_fm_ratio),
         fm_amount: Arc::clone(&shared_fm_amount),
         mod_shape: Arc::clone(&shared_mod_shape),
-        
+
+        shared_drum_mask: Arc::clone(&shared_drum_mask),
+        last_drum_mask: 0,
+        kick: KickDrum::new(44100, tri_table),
+
         last_key_mask: 0,
         shared_key_mask: Arc::clone(&shared_key_mask),
         shared_duty_cycle: Arc::clone(&shared_duty),
@@ -279,8 +286,12 @@ fn main() {
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        let mut bitmask: u32 = 0;
+        let mut drum_mask: u32 = 0;
+        if keys.contains(&Keycode::Home) { drum_mask |= 1 << 0; } // kick
 
+        shared_drum_mask.store(drum_mask, Ordering::Relaxed);
+
+        let mut bitmask: u32 = 0;
         if keys.contains(&Keycode::A) { bitmask |= 1 << 0; }  // C
         if keys.contains(&Keycode::W) { bitmask |= 1 << 1; }  // C#
         if keys.contains(&Keycode::S) { bitmask |= 1 << 2; }  // D
