@@ -1,3 +1,4 @@
+mod svf_filter;
 mod classic_osc;
 mod pulse_osc;
 mod adsr;
@@ -12,6 +13,8 @@ use classic_osc::{WtableOscillator, WtableUnison};
 use pulse_osc::{PulseUnison};
 use task_manager::{TaskManager, Voice};
 use adsr::AdsrEnvelope;
+use crate::svf_filter::SvfFilter;
+
 
 fn main() {
     // calculeaza la inceput static mut _TABLE si da referintele, ca sa nu ocupe mult ram
@@ -33,11 +36,15 @@ fn main() {
     let shared_scale_offset = Arc::new(AtomicU32::new(24));
     let shared_unison_voice_cnt = Arc::new(AtomicU32::new(1));
     let shared_detune = Arc::new(AtomicU32::new(0));
+    let shared_filter_type= Arc::new(AtomicU32::new(3)); // 0-cutoff  1-high  2-band  3-no filter
+    let shared_filter_res = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+    let shared_filter_env_amt = Arc::new(AtomicU32::new(1.0f32.to_bits()));
 
     // Controale Modulator
     let shared_fm_ratio = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let shared_fm_amount = Arc::new(AtomicU32::new(0.0f32.to_bits()));
     let shared_mod_shape = Arc::new(AtomicU32::new(0)); // 0=Sin, 1=Tri, 2=Saw
+    let cutoff = Arc::new(AtomicU32::new(1.0f32.to_bits()));
 
     // Variabile locale pentru UI
     let mut current_fm_ratio: f32 = 1.0;
@@ -45,11 +52,16 @@ fn main() {
     let mut current_mod_shape: u32 = 0;
     let mut current_detune: u32 = 0;
     let mut current_duty: f32 = 0.5;
+    let mut current_cutoff: f32 = 1.0;
+    let mut current_filter_type: u32 = 3;
+    let mut current_res: f32 = 1.0;
+    let mut current_filter_env_amt: f32 = 1.0;
 
     let voices: [Voice; 8] = core::array::from_fn(|_| {
         Voice {
             table_unison: WtableUnison::new(44100, sin_table),
             pulse_unison: PulseUnison::new(44100),
+            filter: SvfFilter::new(),
             modulator: WtableOscillator::new(44100, sin_table),
             adsr: AdsrEnvelope::new(44100),
             active_freq: 0.0,
@@ -61,10 +73,16 @@ fn main() {
         voices,
         shared_unison_voice_cnt: Arc::clone(&shared_unison_voice_cnt),
         shared_detune: Arc::clone(&shared_detune),
+
+        cutoff: Arc::clone(&cutoff),
+        shared_filter_type: Arc::clone(&shared_filter_type),
+        shared_filter_res: Arc::clone(&shared_filter_res),
+        shared_filter_env_amt: Arc::clone(&shared_filter_env_amt),
+
         sin_table,
         tri_table,
         saw_table,
-        
+
         fm_ratio: Arc::clone(&shared_fm_ratio),
         fm_amount: Arc::clone(&shared_fm_amount),
         mod_shape: Arc::clone(&shared_mod_shape),
@@ -84,6 +102,9 @@ fn main() {
     println!(" Detune: -/=");
     println!(" fm (Amount: <- / ->) | (Ratio: PgUp / PgDn) | (Forma: O)");
     println!(" Reset FM: /");
+    println!(" Filter: type: F2, cutoff: 2/4 | resonance: F5/F6 | envelope: F7/F8");
+
+    let mut times = 0;
 
     loop {
         let keys = device_state.get_keys();
@@ -104,6 +125,7 @@ fn main() {
             println!(" Detune: -/=");
             println!(" fm (Amount: <- / ->) | (Ratio: PgUp / PgDn) | (Forma: O)");
             println!(" Reset FM: /");
+            println!(" Filter: type: F2, cutoff: 2/4 | resonance: F5/F6 | envelope: F7/F8");
             std::thread::sleep(Duration::from_millis(500));
         }
 
@@ -197,11 +219,62 @@ fn main() {
         }
 
         // reset fm
-        if keys.contains(&Keycode::Slash) { 
+        if keys.contains(&Keycode::Slash) {
             current_fm_ratio = 1.0; current_fm_amt = 0.0;
             shared_fm_amount.store(0.0f32.to_bits(), Ordering::Relaxed);
             shared_fm_ratio.store(1.0f32.to_bits(), Ordering::Relaxed);
             println!("FM Modulator Reset");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+
+        // update filter cutoff
+        if keys.contains(&Keycode::Key4) {
+            current_cutoff = (current_cutoff + 0.01).min(1.0);
+            cutoff.store(current_cutoff.to_bits(), Ordering::Relaxed);
+            println!("cutoff: {}", current_cutoff);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if keys.contains(&Keycode::Key2) {
+            current_cutoff = (current_cutoff - 0.01).max(0.0);
+            cutoff.store(current_cutoff.to_bits(), Ordering::Relaxed);
+            println!("cutoff: {}", current_cutoff);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // update filter resonance
+        if keys.contains(&Keycode::F6) {
+            current_res = (current_res + 0.01).min(1.0);
+            shared_filter_res.store(current_res.to_bits(), Ordering::Relaxed);
+            println!("Resonance: {:.2}", current_res);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if keys.contains(&Keycode::F5) {
+            current_res = (current_res - 0.01).max(0.0);
+            shared_filter_res.store(current_res.to_bits(), Ordering::Relaxed);
+            println!("Resonance: {:.2}", current_res);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // update filter type
+        if keys.contains(&Keycode::F2) {
+            current_filter_type = (current_filter_type + 1) % 4;
+            shared_filter_type.store(current_filter_type, Ordering::Relaxed);
+            match current_filter_type {
+                0 => { println!("Selected low pass"); cutoff.store(1.0f32.to_bits(), Ordering::Relaxed); current_cutoff = 1.0; },
+                1 => { println!("Selected high pass"); cutoff.store(0.0f32.to_bits(), Ordering::Relaxed); current_cutoff = 0.0; },
+                2 => { println!("Selected band pass"); cutoff.store(0.1f32.to_bits(), Ordering::Relaxed); current_cutoff = 0.1; },
+                _ => println!("Selected no filter"),
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        if keys.contains(&Keycode::F8) {
+            current_filter_env_amt = (current_filter_env_amt + 0.01).min(1.0);
+            shared_filter_env_amt.store(current_filter_env_amt.to_bits(), Ordering::Relaxed);
+            println!("Filter Env Amount: {:.2}", current_filter_env_amt);
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        if keys.contains(&Keycode::F7) {
+            current_filter_env_amt = (current_filter_env_amt - 0.01).max(0.0);
+            shared_filter_env_amt.store(current_filter_env_amt.to_bits(), Ordering::Relaxed);
+            println!("Filter Env Amount: {:.2}", current_filter_env_amt);
             std::thread::sleep(Duration::from_millis(200));
         }
 
@@ -221,10 +294,24 @@ fn main() {
         if keys.contains(&Keycode::J) { bitmask |= 1 << 11; } // B
         if keys.contains(&Keycode::K) { bitmask |= 1 << 12; } // C
 
+        // 3 notes at close intervals
+        if times % 81 == 0 {
+            times = 0;
+        }
+        if times >= 60 && (times - 60) % 7 == 0 {
+            // bitmask |= 1 << 0;
+        }
+
         shared_key_mask.store(bitmask, Ordering::Relaxed);
 
         if keys.contains(&Keycode::Escape) { break; }
 
-        std::thread::sleep(Duration::from_millis(5));
+        if times >= 60 && (times - 60) % 7 == 0 {
+            // std::thread::sleep(Duration::from_millis(100));
+        }
+
+        std::thread::sleep(Duration::from_millis(10));
+        times += 1;
+
     }
 }

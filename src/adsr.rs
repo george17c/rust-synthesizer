@@ -25,7 +25,7 @@ impl AdsrEnvelope {
             value: 0.0,
             sample_rate: sample_rate as f32,
             attack_time: 0.05,
-            decay_time: 0.8,
+            decay_time: 0.4,
             sustain_level: 0.8,
             release_time: 0.4,
         }

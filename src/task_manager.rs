@@ -8,6 +8,7 @@ use crate::pulse_osc::PulseUnison;
 use crate::classic_osc::WtableOscillator;
 use crate::adsr::AdsrEnvelope;
 use crate::adsr::AdsrStage;
+use crate::svf_filter::SvfFilter;
 
 const FREQS: [f32; 73] = [
     // C1 - B1
@@ -30,6 +31,7 @@ pub struct Voice {
     pub table_unison: WtableUnison,
     pub pulse_unison: PulseUnison,
 
+    pub filter: SvfFilter,
     pub modulator: WtableOscillator,
 
     pub adsr: AdsrEnvelope,
@@ -50,10 +52,15 @@ pub struct TaskManager {
     pub shared_unison_voice_cnt: Arc<AtomicU32>,
     pub shared_detune: Arc<AtomicU32>,
 
+    pub cutoff: Arc<AtomicU32>,
+    pub shared_filter_res: Arc<AtomicU32>,
+    pub shared_filter_type: Arc<AtomicU32>,
+    pub shared_filter_env_amt: Arc<AtomicU32>,
+
     pub sin_table: &'static [f32; 128],
     pub tri_table: &'static [f32; 128],
     pub saw_table: &'static [f32; 128],
-    
+
     pub fm_ratio: Arc<AtomicU32>,
     pub fm_amount: Arc<AtomicU32>,
 
@@ -116,6 +123,12 @@ impl Iterator for TaskManager {
 
         let voices_count = self.shared_unison_voice_cnt.load(Ordering::Relaxed) as usize;
 
+        // filter controls
+        let cutoff = f32::from_bits(self.cutoff.load(Ordering::Relaxed));
+        let resonance = f32::from_bits(self.shared_filter_res.load(Ordering::Relaxed));
+        let filter_type = self.shared_filter_type.load(Ordering::Relaxed);
+        let filter_env_amt = f32::from_bits(self.shared_filter_env_amt.load(Ordering::Relaxed));
+
         // mix sound
         let mut mixed_sample = 0.0;
 
@@ -154,7 +167,18 @@ impl Iterator for TaskManager {
                     },
                     _ => 0.0,
                 };
-                mixed_sample += raw_sample * env_vol;
+
+                let dynamic_cutoff = (cutoff + (env_vol * filter_env_amt)).clamp(0.0, 1.0);
+                let (low_pass, high_pass, band_pass) = voice.filter.process(raw_sample, dynamic_cutoff, resonance);
+
+                let filtered_sample = match filter_type {
+                    0 => low_pass,
+                    1 => high_pass,
+                    2 => band_pass,
+                    _ => raw_sample,
+                };
+
+                mixed_sample += filtered_sample * env_vol;
             }
         }
 
