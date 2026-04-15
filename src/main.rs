@@ -18,7 +18,8 @@ use crate::drums::KickDrum;
 use crate::svf_filter::SvfFilter;
 
 fn print_menu() {
-    println!("Pian: A, S, D, F, G...");
+    println!("Print this menu: F3");
+    println!("Pian: A, S, D, F, G...K");
     println!("Gama: Z/X/C, Mod: N/M");
     println!(" Sunet Carrier: 7=Pulse, 8=Sine, 9=Tri, 0=Saw");
     println!(" Voices: 1, 3, 5, Detune: -/=");
@@ -70,7 +71,7 @@ fn main() {
     let mut current_filter_env_amt: f32 = 1.0;
     let mut current_mode_idx: u32 = 0;
 
-    let voices: [Voice; 5] = core::array::from_fn(|_| {
+    let voices: [Voice; 6] = core::array::from_fn(|_| {
         Voice {
             table_unison: WtableUnison::new(48000, sin_table),
             pulse_unison: PulseUnison::new(48000),
@@ -223,11 +224,11 @@ fn main() {
         }
 
         // control fm
-        if keys.contains(&Keycode::Left) { current_fm_amt = (current_fm_amt - 1.0).max(0.0); changed_fm = true; std::thread::sleep(Duration::from_millis(30)); }
-        if keys.contains(&Keycode::Right) { current_fm_amt = (current_fm_amt + 1.0).min(16.0); changed_fm = true; std::thread::sleep(Duration::from_millis(30)); }
+        if keys.contains(&Keycode::Left) { current_fm_amt = (current_fm_amt - 0.1).max(0.0); changed_fm = true; std::thread::sleep(Duration::from_millis(10)); }
+        if keys.contains(&Keycode::Right) { current_fm_amt = (current_fm_amt + 0.1).min(31.0); changed_fm = true; std::thread::sleep(Duration::from_millis(10)); }
 
-        if keys.contains(&Keycode::PageUp) { current_fm_ratio += 0.5; changed_fm = true; std::thread::sleep(Duration::from_millis(150)); }
-        if keys.contains(&Keycode::PageDown) { current_fm_ratio = (current_fm_ratio - 0.5).max(0.0); changed_fm = true; std::thread::sleep(Duration::from_millis(150)); }
+        if keys.contains(&Keycode::PageUp) { current_fm_ratio += 0.1; changed_fm = true; std::thread::sleep(Duration::from_millis(15)); }
+        if keys.contains(&Keycode::PageDown) { current_fm_ratio = (current_fm_ratio - 0.1).max(0.0); changed_fm = true; std::thread::sleep(Duration::from_millis(15)); }
 
         if keys.contains(&Keycode::O) { 
             current_mod_shape = (current_mod_shape + 1) % 3; 
@@ -355,4 +356,5 @@ fn main() {
         std::thread::sleep(Duration::from_millis(10));
 
     }
+    std::thread::sleep(Duration::from_millis(500));
 }

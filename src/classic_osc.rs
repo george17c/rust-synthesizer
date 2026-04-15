@@ -26,7 +26,7 @@ impl WtableOscillator {
     }
 
     pub fn get_sample(&mut self) -> f32 {
-        let sample = self.lerp();
+        let sample = self.lerp(self.idx);
         self.idx += self.idx_increment;
         let len = self.wave_table.len() as f32;
         if self.idx >= len {
@@ -35,14 +35,29 @@ impl WtableOscillator {
         return sample;
     }
 
-    fn lerp(&self) -> f32 {
-        let truncated_index = self.idx as usize;
+    pub fn get_sample_fm(&mut self, pm_amount: f32) -> f32 {
+        let len = self.wave_table.len() as f32;
+
+        let mut read_idx = self.idx + (pm_amount * len);
+
+        // wrap-around
+        while read_idx >= len { read_idx -= len; }
+        while read_idx < 0.0 { read_idx += len; }
+
+        let sample = self.lerp(read_idx);
+
+        self.idx += self.idx_increment;
+        while self.idx >= len { self.idx -= len; }
+
+        sample
+    }
+
+    fn lerp(&self, idx: f32) -> f32 {
+        let truncated_index = idx as usize;
         let next_index = (truncated_index + 1) % self.wave_table.len();
+        let next_index_weight = idx - truncated_index as f32;
 
-        let next_index_weight = self.idx - truncated_index as f32;
-        let truncated_index_weight = 1.0 - next_index_weight;
-
-        return truncated_index_weight * self.wave_table[truncated_index] 
+        return (1.0 - next_index_weight) * self.wave_table[truncated_index] 
                + next_index_weight * self.wave_table[next_index];
     }
 }
@@ -99,6 +114,14 @@ impl WtableUnison {
         let mut sum = 0.0;
         for i in 0..self.active_voices {
             sum += self.oscs[i].get_sample();
+        }
+        2.0 * sum / (self.active_voices as f32 + 1.0)
+    }
+
+    pub fn get_sample_fm(&mut self, pm_amount: f32) -> f32 {
+        let mut sum = 0.0;
+        for i in 0..self.active_voices {
+            sum += self.oscs[i].get_sample_fm(pm_amount);
         }
         2.0 * sum / (self.active_voices as f32 + 1.0)
     }

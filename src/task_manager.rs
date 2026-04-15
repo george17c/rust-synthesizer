@@ -43,7 +43,7 @@ impl Voice {
 }
 
 pub struct TaskManager {
-    pub voices: [Voice; 5],
+    pub voices: [Voice; 6],
     pub shared_unison_voice_cnt: Arc<AtomicU32>,
     pub shared_detune: Arc<AtomicU32>,
 
@@ -155,31 +155,34 @@ impl Iterator for TaskManager {
                 voice.modulator.set_table(match shape { 1 => self.tri_table, 2 => self.saw_table, _ => self.sin_table });
                 voice.modulator.set_freq(voice.active_freq * fm_ratio);
 
-                let mut m_sig = voice.modulator.get_sample();
-
-                // for pitch shift effect
-                if fm_ratio == 0.0 { m_sig = 1.0; }
-
-                let modulated_freq = (voice.active_freq + (m_sig * fm_amt * voice.active_freq)).max(1.0);
+                let m_sig = voice.modulator.get_sample();
+                let phase_mod = m_sig * fm_amt * 0.25;
 
                 let raw_sample = match mode {
                     // Pulse
                     0 => {
-                        voice.pulse_unison.set_freq_and_detune(modulated_freq, detune_amt);
-                        voice.pulse_unison.get_sample(duty)
+                        voice.pulse_unison.set_freq_and_detune(voice.active_freq, detune_amt);
+                        if fm_ratio == 0.0 || fm_amt == 0.0 {
+                            voice.pulse_unison.get_sample(duty)
+                        } else {
+                            voice.pulse_unison.get_sample_fm(duty, phase_mod)
+                        }
                     },
 
                     // Sine, Tri, Saw
                     1..=3 => {
                         let table = match mode { 1 => self.sin_table, 2 => self.tri_table, _ => self.saw_table };
                         voice.table_unison.set_table(table);
-                        voice.table_unison.set_freq_and_detune(modulated_freq, detune_amt);
-                        voice.table_unison.get_sample()
+                        voice.table_unison.set_freq_and_detune(voice.active_freq, detune_amt);
+                        if fm_ratio == 0.0 || fm_amt == 0.0 {
+                            voice.table_unison.get_sample()
+                        } else {
+                            voice.table_unison.get_sample_fm(phase_mod)
+                        }
                     },
                     _ => 0.0,
                 };
 
-                
                 let filtered_sample = if filter_type == 3 {
                     raw_sample
                 } else {
@@ -198,7 +201,7 @@ impl Iterator for TaskManager {
             }
         }
 
-        mixed_sample += 3.0 * self.kick.get_sample();
+        mixed_sample += self.kick.get_sample();
 
         Some(mixed_sample * 0.2)
     }

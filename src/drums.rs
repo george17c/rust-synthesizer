@@ -46,6 +46,6 @@ impl KickDrum {
         let freq = 40.0 + (110.0 * e);
         self.sine.set_freq(freq);
 
-        2.0 * self.sine.get_sample() * e
+        10.0 * self.sine.get_sample() * e
     }
 }

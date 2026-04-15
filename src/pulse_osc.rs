@@ -25,6 +25,16 @@ impl PulseOscillator {
 
         if self.phase < duty { 1.0 } else { -1.0 }
     }
+
+    pub fn get_sample_fm(&mut self, duty: f32, pm_amount: f32) -> f32 {
+        let mut read_idx  = self.phase + pm_amount;
+        while read_idx >= 1.0 { read_idx -= 1.0; }
+
+        self.phase += self.phase_increment;
+        while self.phase >= 1.0 { self.phase -= 1.0; }
+
+        if read_idx < duty { 1.0 } else { -1.0 }
+    }
 }
 
 pub struct PulseUnison {
@@ -53,6 +63,14 @@ impl PulseUnison {
         for i in 0..self.active_voices {
             sum += self.oscs[i].get_sample(duty);
         }
-        sum / (self.active_voices as f32)
+        2.0 * sum / (self.active_voices as f32 + 1.0)
+    }
+
+    pub fn get_sample_fm(&mut self, duty: f32, pm_amount: f32) -> f32 {
+        let mut sum = 0.0;
+        for i in 0..self.active_voices {
+            sum += self.oscs[i].get_sample_fm(duty, pm_amount);
+        }
+        2.0 * sum / (self.active_voices as f32 + 1.0)
     }
 }
