@@ -1,12 +1,12 @@
 use crate::classic_osc::WtableOscillator;
 
-pub struct DrumAdsr {
+pub struct DrumEnv {
     value: f32,
     decay: f32,
     active: bool,
 }
 
-impl DrumAdsr {
+impl DrumEnv {
     pub fn new(decay: f32) -> Self {
         Self { value: 0.0, decay: decay, active: false }
     }
@@ -26,13 +26,13 @@ impl DrumAdsr {
 
 pub struct KickDrum {
     sine: WtableOscillator,
-    env: DrumAdsr,
+    env: DrumEnv,
 }
 
 impl KickDrum {
     pub fn new(sample_rate: u32, sine_table: &'static [f32; 128]) -> Self {
         let sine = WtableOscillator::new(sample_rate, sine_table);
-        Self { sine, env: DrumAdsr::new(0.99985) }
+        Self { sine, env: DrumEnv::new(0.99985) }
     }
     pub fn trigger(&mut self) {
         // eliminate crackling

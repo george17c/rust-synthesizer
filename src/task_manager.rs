@@ -11,21 +11,15 @@ use crate::adsr::AdsrStage;
 use crate::svf_filter::SvfFilter;
 use crate::drums::KickDrum;
 
-const FREQS: [f32; 73] = [
-    // C1 - B1
-    32.70, 34.65, 36.71, 38.89, 41.20, 43.65, 46.25, 49.00, 51.91, 55.00, 58.27, 61.74,
+const FREQS: [f32; 42] = [
     // C2 - B2
     65.41, 69.30, 73.42, 77.78, 82.41, 87.31, 92.50, 98.00, 103.83, 110.00, 116.54, 123.47,
     // C3 - B3
     130.81, 138.59, 146.83, 155.56, 164.81, 174.61, 185.00, 196.00, 207.65, 220.00, 233.08, 246.94,
     // C4 - B4
     261.63, 277.18, 293.66, 311.13, 329.63, 349.23, 369.99, 392.00, 415.30, 440.00, 466.16, 493.88,
-    // C5 - B5
-    523.25, 554.37, 587.33, 622.25, 659.25, 698.46, 739.99, 783.99, 830.61, 880.00, 932.33, 987.77,
-    // C6 - B6
-    1046.5, 1108.73, 1174.66, 1244.51, 1318.51, 1396.91, 1479.98, 1567.98, 1661.22, 1760.00, 1864.66, 1975.53,
-    // C7
-    2093.00
+    // C5 - F5
+    523.25, 554.37, 587.33, 622.25, 659.25, 698.46,
 ];
 
 pub struct Voice {
@@ -76,7 +70,8 @@ pub struct TaskManager {
     pub last_key_mask: u32,
     pub shared_key_mask: Arc<AtomicU32>,
     pub shared_duty_cycle: Arc<AtomicU32>,
-    pub shared_mode: Arc<AtomicU32>,
+    pub shared_base_wf: Arc<AtomicU32>,
+    pub shared_mode_idx: Arc<AtomicU32>,
     pub shared_scale: Arc<AtomicU32>,
 }
 
@@ -85,7 +80,8 @@ impl Iterator for TaskManager {
 
     fn next(&mut self) -> Option<Self::Item> {
         let duty = f32::from_bits(self.shared_duty_cycle.load(Ordering::Relaxed));
-        let mode = self.shared_mode.load(Ordering::Relaxed);
+        // base freq
+        let mode = self.shared_base_wf.load(Ordering::Relaxed);
         let current_mask = self.shared_key_mask.load(Ordering::Relaxed);
         let drum_mask = self.shared_drum_mask.load(Ordering::Relaxed);
 
@@ -93,6 +89,8 @@ impl Iterator for TaskManager {
 
         // detect pressed keys
         let offset = self.shared_scale.load(Ordering::Relaxed) as usize;
+        // musical mode
+        let mode_idx = self.shared_mode_idx.load(Ordering::Relaxed) as usize;
 
         // detect drums
         if drum_mask != self.last_drum_mask {
@@ -106,7 +104,7 @@ impl Iterator for TaskManager {
             for i in 0..13 {
                 let is_pressed = (current_mask & (1 << i)) != 0;
                 let was_pressed = (self.last_key_mask & (1 << i)) != 0;
-                let freq = FREQS[i + offset];
+                let freq = FREQS[i + offset + mode_idx];
 
                 if is_pressed && !was_pressed {
                     // NOTE ON: Căutăm o voce liberă
@@ -181,30 +179,34 @@ impl Iterator for TaskManager {
                     _ => 0.0,
                 };
 
-                let dynamic_cutoff = (cutoff + (env_vol * filter_env_amt)).clamp(0.0, 1.0);
-                let (low_pass, high_pass, band_pass) =
-                    voice.filter.process(raw_sample, dynamic_cutoff, resonance);
-
-                let filtered_sample = match filter_type {
-                    0 => low_pass,
-                    1 => high_pass,
-                    2 => band_pass,
-                    _ => raw_sample,
+                
+                let filtered_sample = if filter_type == 3 {
+                    raw_sample
+                } else {
+                    let dynamic_cutoff = (cutoff + (env_vol * filter_env_amt)).clamp(0.0, 1.0);
+                    let (low_pass, high_pass, band_pass) =
+                        voice.filter.process(raw_sample, dynamic_cutoff, resonance);
+                    match filter_type {
+                        0 => low_pass,
+                        1 => high_pass,
+                        2 => band_pass,
+                        _ => raw_sample,
+                    }
                 };
 
                 mixed_sample += filtered_sample * env_vol;
             }
         }
 
-        mixed_sample += self.kick.get_sample();
+        mixed_sample += 3.0 * self.kick.get_sample();
 
-        Some(mixed_sample * 0.25)
+        Some(mixed_sample * 0.2)
     }
 }
 
 impl Source for TaskManager {
     fn channels(&self) -> u16 { 1 }
-    fn sample_rate(&self) -> u32 { 44100 }
+    fn sample_rate(&self) -> u32 { 48000 }
     fn current_frame_len(&self) -> Option<usize> { None }
     fn total_duration(&self) -> Option<Duration> { None }
 }

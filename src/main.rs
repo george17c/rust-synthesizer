@@ -17,6 +17,14 @@ use adsr::AdsrEnvelope;
 use crate::drums::KickDrum;
 use crate::svf_filter::SvfFilter;
 
+fn print_menu() {
+    println!("Pian: A, S, D, F, G...");
+    println!("Gama: Z/X/C, Mod: N/M");
+    println!(" Sunet Carrier: 7=Pulse, 8=Sine, 9=Tri, 0=Saw");
+    println!(" Voices: 1, 3, 5, Detune: -/=");
+    println!(" fm (Amount: <- / ->) | (Ratio: PgUp / PgDn) | (Forma: O) | Reset: /");
+    println!(" Filter: type: F2, cutoff: 2/4 | resonance: F5/F6 | envelope: F7/F8");
+}
 
 fn main() {
     // calculeaza la inceput static mut _TABLE si da referintele, ca sa nu ocupe mult ram
@@ -32,10 +40,11 @@ fn main() {
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let sink = Sink::try_new(&stream_handle).unwrap();
 
-    let shared_mode = Arc::new(AtomicU32::new(1));
+    let shared_base_wf = Arc::new(AtomicU32::new(1));
     let shared_duty = Arc::new(AtomicU32::new(0.5f32.to_bits()));
     let shared_key_mask = Arc::new(AtomicU32::new(0));
-    let shared_scale_offset = Arc::new(AtomicU32::new(24));
+    let shared_scale_offset = Arc::new(AtomicU32::new(12));
+    let shared_mode_idx = Arc::new(AtomicU32::new(0));
     let shared_unison_voice_cnt = Arc::new(AtomicU32::new(1));
     let shared_detune = Arc::new(AtomicU32::new(0));
     let shared_filter_type= Arc::new(AtomicU32::new(3)); // 0-cutoff  1-high  2-band  3-no filter
@@ -59,14 +68,15 @@ fn main() {
     let mut current_filter_type: u32 = 3;
     let mut current_res: f32 = 1.0;
     let mut current_filter_env_amt: f32 = 1.0;
+    let mut current_mode_idx: u32 = 0;
 
     let voices: [Voice; 5] = core::array::from_fn(|_| {
         Voice {
-            table_unison: WtableUnison::new(44100, sin_table),
-            pulse_unison: PulseUnison::new(44100),
+            table_unison: WtableUnison::new(48000, sin_table),
+            pulse_unison: PulseUnison::new(48000),
             filter: SvfFilter::new(),
-            modulator: WtableOscillator::new(44100, sin_table),
-            adsr: AdsrEnvelope::new(44100),
+            modulator: WtableOscillator::new(48000, sin_table),
+            adsr: AdsrEnvelope::new(48000),
             active_freq: 0.0,
             active_key: 99,
         }
@@ -92,27 +102,22 @@ fn main() {
 
         shared_drum_mask: Arc::clone(&shared_drum_mask),
         last_drum_mask: 0,
-        kick: KickDrum::new(44100, tri_table),
+        kick: KickDrum::new(48000, sin_table),
 
         last_key_mask: 0,
         shared_key_mask: Arc::clone(&shared_key_mask),
         shared_duty_cycle: Arc::clone(&shared_duty),
-        shared_mode: Arc::clone(&shared_mode),
+        shared_base_wf: Arc::clone(&shared_base_wf),
+        shared_mode_idx: Arc::clone(&shared_mode_idx),
         shared_scale: Arc::clone(&shared_scale_offset),
     };
 
     sink.append(audio_task);
 
-    println!("Pian: A, S, D, F, G...");
-    println!(" Sunet Carrier: 7=Pulse, 8=Sine, 9=Tri, 0=Saw");
-    println!(" Voices: 1, 3, 5");
-    println!(" Detune: -/=");
-    println!(" fm (Amount: <- / ->) | (Ratio: PgUp / PgDn) | (Forma: O)");
-    println!(" Reset FM: /");
-    println!(" Filter: type: F2, cutoff: 2/4 | resonance: F5/F6 | envelope: F7/F8");
-
     let mut times = 0;
     let mut sample = false;
+
+    print_menu();
 
     loop {
         let keys = device_state.get_keys();
@@ -122,36 +127,48 @@ fn main() {
         if keys.contains(&Keycode::Z) { shared_scale_offset.store(0, Ordering::Relaxed); }
         if keys.contains(&Keycode::X) { shared_scale_offset.store(12, Ordering::Relaxed); }
         if keys.contains(&Keycode::C) { shared_scale_offset.store(24, Ordering::Relaxed); }
-        if keys.contains(&Keycode::V) { shared_scale_offset.store(36, Ordering::Relaxed); }
-        if keys.contains(&Keycode::B) { shared_scale_offset.store(48, Ordering::Relaxed); }
-        if keys.contains(&Keycode::N) { shared_scale_offset.store(60, Ordering::Relaxed); }
+        if keys.contains(&Keycode::N) {
+            if current_mode_idx > 0 { current_mode_idx -= 1; }
+            shared_mode_idx.store(current_mode_idx, Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        if keys.contains(&Keycode::M) {
+            current_mode_idx = (current_mode_idx + 1).min(5);
+            shared_mode_idx.store(current_mode_idx, Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        if keys.contains(&Keycode::N) || keys.contains(&Keycode::M) {
+            print!("Mode: ");
+            match current_mode_idx {
+                0 => println!("Ionian"),
+                1 => println!("Dorian"),
+                2 => println!("Phrygian"),
+                3 => println!("Lydian"),
+                4 => println!("Mixolydian"),
+                _ => println!("Aeolian"),
+            }
+        }
 
         if keys.contains(&Keycode::F3) {
-            println!("Pian: A, S, D, F, G...");
-            println!(" Sunet Carrier: 7=Pulse, 8=Sine, 9=Tri, 0=Saw");
-            println!(" Voices: 1, 3, 5");
-            println!(" Detune: -/=");
-            println!(" fm (Amount: <- / ->) | (Ratio: PgUp / PgDn) | (Forma: O)");
-            println!(" Reset FM: /");
-            println!(" Filter: type: F2, cutoff: 2/4 | resonance: F5/F6 | envelope: F7/F8");
+            print_menu();
             std::thread::sleep(Duration::from_millis(500));
         }
 
         // timbre change
         if keys.contains(&Keycode::Key7) {
-            shared_mode.store(0, Ordering::Relaxed); // Switch to Pulse
+            shared_base_wf.store(0, Ordering::Relaxed); // Switch to Pulse
             println!("Mode: Pulse");
             std::thread::sleep(Duration::from_millis(150));
         } else if keys.contains(&Keycode::Key8) {
-            shared_mode.store(1, Ordering::Relaxed); // Switch to Sine
+            shared_base_wf.store(1, Ordering::Relaxed); // Switch to Sine
             println!("Mode: Sine");
             std::thread::sleep(Duration::from_millis(150));
         } else if keys.contains(&Keycode::Key9) {
-            shared_mode.store(2, Ordering::Relaxed); // Switch to Triangle
+            shared_base_wf.store(2, Ordering::Relaxed); // Switch to Triangle
             println!("Mode: Triangle");
             std::thread::sleep(Duration::from_millis(150));
         } else if keys.contains(&Keycode::Key0) {
-            shared_mode.store(3, Ordering::Relaxed); // Switch to Saw
+            shared_base_wf.store(3, Ordering::Relaxed); // Switch to Saw
             println!("Mode: Saw");
             std::thread::sleep(Duration::from_millis(150));
         }
@@ -191,7 +208,7 @@ fn main() {
         }
 
         // duty cycle
-        if shared_mode.load(Ordering::Relaxed) == 0 {
+        if shared_base_wf.load(Ordering::Relaxed) == 0 {
             if keys.contains(&Keycode::Up) {
                 current_duty = (current_duty + 0.01).min(0.95);
                 changed_duty = true;

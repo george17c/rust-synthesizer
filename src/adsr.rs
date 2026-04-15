@@ -10,7 +10,6 @@ pub enum AdsrStage {
 pub struct AdsrEnvelope {
     pub stage: AdsrStage,
     value: f32,
-    sample_rate: f32,
 
     attack_time: f32,
     decay_time: f32,
@@ -20,14 +19,19 @@ pub struct AdsrEnvelope {
 
 impl AdsrEnvelope {
     pub fn new(sample_rate: u32) -> Self {
+        let attack_time = 0.05;
+        let decay_time = 0.4;
+        let sustain_lvl = 0.8;
+        let release_time = 0.4;
+        let sr = sample_rate as f32;
+
         Self {
             stage: AdsrStage::Off,
             value: 0.0,
-            sample_rate: sample_rate as f32,
-            attack_time: 0.05,
-            decay_time: 0.4,
-            sustain_level: 0.8,
-            release_time: 0.4,
+            attack_time: 1.0 / (attack_time * sr),
+            decay_time: (1.0 - sustain_lvl) / (decay_time * sr),
+            sustain_level: sustain_lvl,
+            release_time: 1.0 / (release_time * sr),
         }
     }
 
@@ -38,14 +42,14 @@ impl AdsrEnvelope {
         match self.stage {
             AdsrStage::Off => self.value = 0.0,
             AdsrStage::Attack => {
-                self.value += 1.0 / (self.attack_time * self.sample_rate);
+                self.value += self.attack_time;
                 if self.value >= 1.0 {
                     self.value = 1.0;
                     self.stage = AdsrStage::Decay;
                 }
             }
             AdsrStage::Decay => {
-                self.value -= (1.0 - self.sustain_level) / (self.decay_time * self.sample_rate);
+                self.value -= self.decay_time;
                 if self.value <= self.sustain_level {
                     self.value = self.sustain_level;
                     self.stage = AdsrStage::Sustain;
@@ -53,8 +57,8 @@ impl AdsrEnvelope {
             }
             AdsrStage::Sustain => self.value = self.sustain_level,
             AdsrStage::Release => {
-                self.value -= 1.0 / (self.release_time * self.sample_rate);
-                if self.value <= 0.0 {
+                self.value -= self.release_time;
+                if self.value <= 0.0001 {
                     self.value = 0.0;
                     self.stage = AdsrStage::Off;
                 }

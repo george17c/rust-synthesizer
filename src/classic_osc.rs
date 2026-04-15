@@ -28,7 +28,10 @@ impl WtableOscillator {
     pub fn get_sample(&mut self) -> f32 {
         let sample = self.lerp();
         self.idx += self.idx_increment;
-        self.idx %= self.wave_table.len() as f32;
+        let len = self.wave_table.len() as f32;
+        if self.idx >= len {
+            self.idx -= len;
+        }
         return sample;
     }
 
