@@ -4,10 +4,12 @@
 mod types;
 mod audio;
 mod input;
+mod synth;
 
 // use types::Pots;
 use audio::audio_task;
 use input::input_task;
+use synth::{make_wtable, wave_sine, wave_triangle, wave_saw};
 
 use core::sync::atomic::{AtomicI16};
 use embassy_executor::Spawner;
@@ -118,7 +120,15 @@ async fn main(spawner: Spawner) {
     let dummy1 = p.PC0.degrade_adc();
     let dummy2 = p.PC1.degrade_adc();
 
-    spawner.spawn(audio_task(sai)).unwrap();
+    static SIN_WAVETABLE: StaticCell<[f32; 128]> = StaticCell::new();
+    static TRI_WAVETABLE: StaticCell<[f32; 128]> = StaticCell::new();
+    static SAW_WAVETABLE: StaticCell<[f32; 128]> = StaticCell::new();
+
+    let sin_table = SIN_WAVETABLE.init(make_wtable(wave_sine));
+    let tri_table = TRI_WAVETABLE.init(make_wtable(wave_triangle));
+    let saw_table = SAW_WAVETABLE.init(make_wtable(wave_saw));
+
+    spawner.spawn(audio_task(sai, sin_table, tri_table, saw_table)).unwrap();
     spawner.spawn(input_task(adc, p.GPDMA1_CH1, vol_pot, dummy1, dummy2)).unwrap();
 
     core::future::pending::<()>().await;

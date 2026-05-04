@@ -40,8 +40,9 @@ pub async fn input_task(
 
     loop {
         // Oversampling x16
+        let nsamples = 16;
         let mut sum = 0u32;
-        for _ in 0..16 {
+        for _ in 0..nsamples {
             adc.read(
                 adc_dma.reborrow(),
                 Irqs,
@@ -51,7 +52,7 @@ pub async fn input_task(
             sum += pot_readings[0] as u32;
         }
 
-        let raw = (sum / 64) as u16;
+        let raw = (sum / nsamples) as u16;
         let new_volume = pot_to_volume(raw);
 
         // Hysteresis: ignora schimbari mici
