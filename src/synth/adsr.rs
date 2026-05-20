@@ -38,6 +38,14 @@ impl AdsrEnvelope {
     pub fn note_on(&mut self) { self.stage = AdsrStage::Attack; }
     pub fn note_off(&mut self) { self.stage = AdsrStage::Release; }
 
+    pub fn set_params(&mut self, atk: f32, dcy: f32, sus: f32, rel: f32) {
+        let sample_rate = 48000.0;
+        self.attack_time = 1.0 / (atk.max(0.001) * sample_rate);
+        self.decay_time = (1.0 - sus) / (dcy.max(0.001) * sample_rate);
+        self.sustain_level = sus.clamp(0.0, 1.0);
+        self.release_time = 1.0 / (rel.max(0.001) * sample_rate);
+    }
+
     pub fn tick(&mut self) -> f32 {
         match self.stage {
             AdsrStage::Off => self.value = 0.0,
