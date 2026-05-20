@@ -25,8 +25,9 @@ embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime
 # Math lib
 micromath = "2.1.0"
 
-# Memory containers
+# Memory
 static_cell = "2.1.1"
+heapless = "0.9.3"
 
 # Defmt support
 defmt = "1.0.1"
