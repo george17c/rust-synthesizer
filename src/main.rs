@@ -1,22 +1,39 @@
 #![no_std]
 #![no_main]
 
-mod types;
 mod audio;
+mod video;
 mod input;
 mod synth;
 
-// use types::Pots;
 use audio::audio_task;
-use input::input_task;
-use synth::{make_wtable, wave_sine, wave_triangle, wave_saw};
+use embedded_graphics::draw_target::DrawTarget;
+use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use crate::{input::page_task, synth::effects::DisplayPage};
 
+// use embedded_graphics::mono_font::MonoTextStyleBuilder;
+// use embedded_graphics::{
+//     mono_font::{ascii::{FONT_6X10, FONT_10X20}, MonoTextStyle},
+//     prelude::*,
+//     primitives::{Line, Rectangle, PrimitiveStyle},
+//     text::Text,
+// };
+// use embedded_graphics::{draw_target::DrawTarget, pixelcolor::{Rgb565, RgbColor}};
+use video::DisplayManager;
+use input::{input_task, key_task};
+use synth::{make_wtable, wave_sine, wave_triangle, wave_saw};
+use synth::effects::SynthState;
+
+use embassy_stm32::{exti::ExtiInput, gpio::Input, timer::qei::{self, Qei}};
+use embassy_stm32::gpio::Pull;
 use core::sync::atomic::{AtomicI16};
 use embassy_executor::Spawner;
+
 use {defmt_rtt as _, panic_probe as _};
 use embassy_stm32::{
     adc::AdcChannel, bind_interrupts, dma, gpio::{Level, Output, Speed},
-    interrupt::typelevel::EXTI13, peripherals,
+    interrupt::typelevel::{EXTI0, EXTI1, EXTI2, EXTI3, EXTI4, EXTI5, EXTI8, EXTI10, EXTI11, EXTI12, EXTI13, EXTI14, EXTI15},
+    peripherals,
     sai::{Config, DataSize, MasterClockDivider, Mode, Protocol, Sai, TxRx, split_subblocks, word},
     spi::{Config as SpiConfig, Spi}, time::Hertz,
 };
@@ -26,6 +43,10 @@ use display_interface_spi::SPIInterface;
 use embedded_hal_bus::{
     spi::{ExclusiveDevice},
 };
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::blocking_mutex::Mutex;
+use core::cell::RefCell;
+use embassy_executor::main;
 use static_cell::StaticCell;
 use mipidsi::{Builder, models::ILI9341Rgb565, options::{Orientation, Rotation}};
 
@@ -33,13 +54,26 @@ use mipidsi::{Builder, models::ILI9341Rgb565, options::{Orientation, Rotation}};
 bind_interrupts!(struct Irqs {
     GPDMA1_CHANNEL0 => dma::InterruptHandler<peripherals::GPDMA1_CH0>;
     GPDMA1_CHANNEL1 => dma::InterruptHandler<peripherals::GPDMA1_CH1>;
+    EXTI0 => embassy_stm32::exti::InterruptHandler<EXTI0>;
+    EXTI1 => embassy_stm32::exti::InterruptHandler<EXTI1>;
+    EXTI2 => embassy_stm32::exti::InterruptHandler<EXTI2>;
+    EXTI3 => embassy_stm32::exti::InterruptHandler<EXTI3>;
+    EXTI4 => embassy_stm32::exti::InterruptHandler<EXTI4>;
+    EXTI5 => embassy_stm32::exti::InterruptHandler<EXTI5>;
+    EXTI8 => embassy_stm32::exti::InterruptHandler<EXTI8>;
+    EXTI10 => embassy_stm32::exti::InterruptHandler<EXTI10>;
+    EXTI11 => embassy_stm32::exti::InterruptHandler<EXTI11>;
+    EXTI12 => embassy_stm32::exti::InterruptHandler<EXTI12>;
     EXTI13 => embassy_stm32::exti::InterruptHandler<EXTI13>;
+    EXTI14 => embassy_stm32::exti::InterruptHandler<EXTI14>;
+    EXTI15 => embassy_stm32::exti::InterruptHandler<EXTI15>;
 });
 
+static STATE: StaticCell<Mutex<ThreadModeRawMutex, RefCell<SynthState>>> = StaticCell::new();
 static VOLUME: AtomicI16 = AtomicI16::new(16000);
-static DMA_BUF: StaticCell<[u16; 1024]> = StaticCell::new();
+static DMA_BUF: StaticCell<[u16; 2048]> = StaticCell::new();
 
-#[embassy_executor::main]
+#[main]
 async fn main(spawner: Spawner) {
     let mut mcu_config = embassy_stm32::Config::default();
 
@@ -57,12 +91,13 @@ async fn main(spawner: Spawner) {
     });
     mcu_config.rcc.sys = embassy_stm32::rcc::Sysclk::PLL1_R;
 
-    // PLL3 AUDIO (15.36 MHz)
+    // PLL3 AUDIO (61.44 MHz)
+    mcu_config.rcc.msis = Some(embassy_stm32::rcc::MSIRange::RANGE_48MHZ);
     mcu_config.rcc.pll3 = Some(embassy_stm32::rcc::Pll {
-        source: embassy_stm32::rcc::PllSource::HSI,
-        prediv: embassy_stm32::rcc::PllPreDiv::DIV2,
-        mul: embassy_stm32::rcc::PllMul::MUL48,
-        divp: Some(embassy_stm32::rcc::PllDiv::DIV25),
+        source: embassy_stm32::rcc::PllSource::MSIS,
+        prediv: embassy_stm32::rcc::PllPreDiv::DIV5,  // 9.6MHz
+        mul: embassy_stm32::rcc::PllMul::MUL32,        // 307.2MHz
+        divp: Some(embassy_stm32::rcc::PllDiv::DIV5),  // 61.44MHz
         divq: None,
         divr: None,
     });
@@ -82,11 +117,15 @@ async fn main(spawner: Spawner) {
     // Un cadru total e 32 (16 stanga + 16 dreapta) 
     sai_config.frame_length = 32;
     sai_config.frame_sync_active_level_length = word::U7(16);
-    // get 48KHz from 15.36MHz
+    sai_config.frame_sync_offset = embassy_stm32::sai::FrameSyncOffset::BeforeFirstBit;
+    sai_config.frame_sync_polarity = embassy_stm32::sai::FrameSyncPolarity::ActiveLow;
+    sai_config.clock_strobe = embassy_stm32::sai::ClockStrobe::Falling;
+    sai_config.bit_order = embassy_stm32::sai::BitOrder::MsbFirst;
+    // get 48KHz
     sai_config.master_clock_divider = MasterClockDivider::DIV5;
     let sai1_subblocks = split_subblocks(p.SAI1);
 
-    let dma_buf = DMA_BUF.init([0u16; 1024]);
+    let dma_buf = DMA_BUF.init([0u16; 2048]);
     let sai = Sai::new_asynchronous(
         sai1_subblocks.0, // Folosim Sub-blocul A
         p.PA8,            // SCK -> BCK
@@ -100,25 +139,72 @@ async fn main(spawner: Spawner) {
 
     // display init
     let cs = Output::new(p.PC9, Level::High, Speed::VeryHigh);
+    let rst = Output::new(p.PC7, Level::High, Speed::VeryHigh);
     let dc = Output::new(p.PC6, Level::Low, Speed::VeryHigh);
-    let mut led = Output::new(p.PA6, Level::Low, Speed::Low);
+    let mut led = Output::new(p.PA11, Level::Low, Speed::Low);
     let mut spi_config = SpiConfig::default();
     spi_config.frequency = Hertz(16_000_000);
-    let spi = Spi::new_blocking_txonly(p.SPI1, p.PA5, p.PA7, spi_config);
+    let spi = Spi::new_blocking_txonly(p.SPI1, p.PA5, p.PA12, spi_config);
     let spi_device = ExclusiveDevice::new_no_delay(spi, cs).unwrap();
     let di = SPIInterface::new(spi_device, dc);
     let mut delay = Delay;
-    let mut _display = Builder::new(ILI9341Rgb565, di)
+    let mut display = Builder::new(ILI9341Rgb565, di)
     .orientation(Orientation::new().rotate(Rotation::Deg90))
+    .reset_pin(rst)
     .init(&mut delay)
     .unwrap();
 
     led.set_high();
 
     let adc = Adc::new(p.ADC1);
-    let vol_pot = p.PA4.degrade_adc();
-    let dummy1 = p.PC0.degrade_adc();
-    let dummy2 = p.PC1.degrade_adc();
+    let vol_pot = p.PC0.degrade_adc();
+    let eff1_pot = p.PC1.degrade_adc();
+    let eff2_pot = p.PC3.degrade_adc();
+    let eff4_pot = p.PC2.degrade_adc();
+
+    let note_a_sharp = ExtiInput::new(p.PC10, p.EXTI10, Pull::Up, Irqs);
+    let note_g_sharp = ExtiInput::new(p.PC12, p.EXTI12, Pull::Up, Irqs);
+
+    let note_c2 = ExtiInput::new(p.PC11, p.EXTI11, Pull::Up, Irqs);
+    let note_b = ExtiInput::new(p.PD2, p.EXTI2, Pull::Up, Irqs);
+ 
+    let note_f_sharp = ExtiInput::new(p.PC13, p.EXTI13, Pull::Up, Irqs);
+    let note_d_sharp = ExtiInput::new(p.PC14, p.EXTI14, Pull::Up, Irqs);
+    let note_c_sharp = ExtiInput::new(p.PC15, p.EXTI15, Pull::Up, Irqs);
+
+    let note_d = ExtiInput::new(p.PH0, p.EXTI0, Pull::Up, Irqs);
+    let note_c1 = ExtiInput::new(p.PH1, p.EXTI1, Pull::Up, Irqs);
+
+    let note_a = ExtiInput::new(p.PB4, p.EXTI4, Pull::Up, Irqs);
+    let note_g = ExtiInput::new(p.PB5, p.EXTI5, Pull::Up, Irqs);
+    let note_f = ExtiInput::new(p.PB3, p.EXTI3, Pull::Up, Irqs);
+    let note_e = ExtiInput::new(p.PC8, p.EXTI8, Pull::Up, Irqs);
+    let keys= [
+        note_c1, note_c_sharp, note_d, note_d_sharp, note_e, note_f, note_f_sharp, note_g, note_g_sharp, note_a, note_a_sharp, note_b, note_c2
+    ];
+
+    for (i, key) in keys.into_iter().enumerate() {
+        spawner.spawn(key_task(key, i)).unwrap();
+    }
+
+    let mut qei_conf = qei::Config::default();
+    qei_conf.ch1_pull = Pull::Up;
+    qei_conf.ch2_pull = Pull::Up;
+    let enc1 = Qei::new(p.TIM2, p.PA0, p.PA1, qei_conf);
+    let enc2 = Qei::new(p.TIM3, p.PA6, p.PA7, qei_conf);
+
+    let initial_state = SynthState::new();
+    let state_ref = STATE.init(Mutex::new(RefCell::new(initial_state)));
+
+    spawner.spawn(input_task(state_ref, adc, p.GPDMA1_CH1,
+        vol_pot, eff1_pot, eff2_pot, eff4_pot,
+        enc1, enc2)).unwrap();
+
+    let b_next_page = Input::new(p.PA4, Pull::Up);
+    let b_prev_page = Input::new(p.PB0, Pull::Up);
+
+    spawner.spawn(page_task(state_ref, b_next_page, 1)).unwrap();
+    spawner.spawn(page_task(state_ref, b_prev_page, 0)).unwrap();
 
     static SIN_WAVETABLE: StaticCell<[f32; 128]> = StaticCell::new();
     static TRI_WAVETABLE: StaticCell<[f32; 128]> = StaticCell::new();
@@ -128,8 +214,16 @@ async fn main(spawner: Spawner) {
     let tri_table = TRI_WAVETABLE.init(make_wtable(wave_triangle));
     let saw_table = SAW_WAVETABLE.init(make_wtable(wave_saw));
 
-    spawner.spawn(audio_task(sai, sin_table, tri_table, saw_table)).unwrap();
-    spawner.spawn(input_task(adc, p.GPDMA1_CH1, vol_pot, dummy1, dummy2)).unwrap();
+    spawner.spawn(audio_task(state_ref, sai, sin_table, tri_table, saw_table)).unwrap();
 
-    core::future::pending::<()>().await;
+    display.clear(Rgb565::BLUE).unwrap();
+    let mut ui = DisplayManager::new(display);
+    loop {
+        state_ref.lock(|s| {
+            let synth = s.borrow();
+            ui.render(&synth.presets, synth.idx, synth.page);
+        });
+
+        embassy_time::Timer::after_millis(33).await;
+    }
 }
