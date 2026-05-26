@@ -83,7 +83,7 @@ impl Effect {
     }
 
     pub fn change_eff(&mut self, eff1: f32, eff2: f32, eff4: f32, delta: f32) {
-        if eff1 > 0.0 {
+        if eff1 >= 0.0 {
             if self.fresh_change1 {
                 if (eff1 - self.eff1).abs() <= delta {
                     self.stale1();
@@ -93,7 +93,7 @@ impl Effect {
             }
         }
 
-        if eff2 > 0.0 {
+        if eff2 >= 0.0 {
             if self.fresh_change2 {
                 if (eff2 - self.eff2).abs() <= delta {
                     self.stale2();
@@ -103,7 +103,7 @@ impl Effect {
             }
         }
 
-        if eff4 > 0.0 {
+        if eff4 >= 0.0 {
             if self.fresh_change4 {
                 if (eff4 - self.eff4).abs() <= delta {
                     self.stale4();
@@ -129,7 +129,7 @@ impl Effect {
         self.eff3 += sus;
         self.eff3 = self.eff3.clamp(0.0, 1.0);
 
-        self.change_eff(atk, dcy, rel, 0.0);
+        self.change_eff(atk, dcy, rel, 0.01);
     }
 
     pub fn change_unison(&mut self, voices: f32, detune: f32) {
@@ -145,8 +145,8 @@ impl Effect {
     }
 
     pub fn change_fmmod(&mut self, ratio: f32, wave: f32, amount: f32) {
-        self.eff2 += wave;
-        self.eff2 = self.eff2.clamp(0.0, 2.0);
+        self.eff3 += wave;
+        self.eff3 = self.eff3.clamp(0.0, 2.0);
 
         if amount == 0.0 || ratio == 0.0  {
             self.disable();
@@ -221,7 +221,6 @@ impl Preset {
 pub enum DisplayPage {
     PresetList,
     EffectList,
-    Visualize,
 }
 
 pub struct SynthState {
@@ -266,8 +265,7 @@ impl SynthState {
     pub fn next_page(&mut self) {
         let page = match self.page {
             DisplayPage::PresetList => DisplayPage::EffectList,
-            DisplayPage::EffectList => DisplayPage::Visualize,
-            _ => DisplayPage::Visualize,
+            DisplayPage::EffectList => DisplayPage::EffectList,
         };
         self.page = page;
     }
@@ -276,7 +274,6 @@ impl SynthState {
         let page = match self.page {
             DisplayPage::PresetList => DisplayPage::PresetList,
             DisplayPage::EffectList => DisplayPage::PresetList,
-            _ => DisplayPage::EffectList,
         };
         self.page = page;
     }
