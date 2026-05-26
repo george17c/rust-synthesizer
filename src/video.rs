@@ -74,14 +74,13 @@ impl DisplayManager {
                 let vals_changed = self.last_eff_vals != current_vals;
 
                 if page_changed || effect_changed || vals_changed {
+                    self.last_preset_idx = selected_preset;
                     self.draw_effect_list(&presets[selected_preset], page_changed, self.last_effect_idx, vals_changed);
 
-                    // Salvăm noile stări
                     self.last_effect_idx = selected_effect;
                     self.last_eff_vals = current_vals;
                 }
             }
-            _ => {}
         }
     }
 
@@ -93,7 +92,7 @@ impl DisplayManager {
             .font(&FONT_10X20).text_color(Rgb565::BLUE).background_color(Rgb565::WHITE).build();
 
         if force_full {
-            self.clear_band(0, 20);
+            self.clear_band(0, 40);
             let presets_end_y = 20 + (PRESETS_NUM as i32 * 20);
             self.clear_band(presets_end_y, (220 - presets_end_y) as u32); 
         }
@@ -126,10 +125,10 @@ impl DisplayManager {
 
         if force_full {
             // row 1
-            self.clear_band(20, 20); 
+            self.clear_band(20, 40); 
 
-            // space between effects
-            self.clear_band(140, 65); 
+            // previously selected preset
+            self.clear_band(20 + self.last_preset_idx as i32 * 20, 40);
 
             // effect values band
             self.clear_band(206, 34);
