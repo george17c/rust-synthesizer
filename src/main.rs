@@ -11,14 +11,6 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use crate::{input::page_task, synth::effects::DisplayPage};
 
-// use embedded_graphics::mono_font::MonoTextStyleBuilder;
-// use embedded_graphics::{
-//     mono_font::{ascii::{FONT_6X10, FONT_10X20}, MonoTextStyle},
-//     prelude::*,
-//     primitives::{Line, Rectangle, PrimitiveStyle},
-//     text::Text,
-// };
-// use embedded_graphics::{draw_target::DrawTarget, pixelcolor::{Rgb565, RgbColor}};
 use video::DisplayManager;
 use input::{input_task, key_task};
 use synth::{make_wtable, wave_sine, wave_triangle, wave_saw};
@@ -32,7 +24,7 @@ use embassy_executor::Spawner;
 use {defmt_rtt as _, panic_probe as _};
 use embassy_stm32::{
     adc::AdcChannel, bind_interrupts, dma, gpio::{Level, Output, Speed},
-    interrupt::typelevel::{EXTI0, EXTI1, EXTI2, EXTI3, EXTI4, EXTI5, EXTI8, EXTI10, EXTI11, EXTI12, EXTI13, EXTI14, EXTI15},
+    interrupt::typelevel::{EXTI0, EXTI1, EXTI2, EXTI3, EXTI5, EXTI6, EXTI8, EXTI10, EXTI11, EXTI12, EXTI13, EXTI14, EXTI15},
     peripherals,
     sai::{Config, DataSize, MasterClockDivider, Mode, Protocol, Sai, TxRx, split_subblocks, word},
     spi::{Config as SpiConfig, Spi}, time::Hertz,
@@ -58,8 +50,8 @@ bind_interrupts!(struct Irqs {
     EXTI1 => embassy_stm32::exti::InterruptHandler<EXTI1>;
     EXTI2 => embassy_stm32::exti::InterruptHandler<EXTI2>;
     EXTI3 => embassy_stm32::exti::InterruptHandler<EXTI3>;
-    EXTI4 => embassy_stm32::exti::InterruptHandler<EXTI4>;
     EXTI5 => embassy_stm32::exti::InterruptHandler<EXTI5>;
+    EXTI6 => embassy_stm32::exti::InterruptHandler<EXTI6>;
     EXTI8 => embassy_stm32::exti::InterruptHandler<EXTI8>;
     EXTI10 => embassy_stm32::exti::InterruptHandler<EXTI10>;
     EXTI11 => embassy_stm32::exti::InterruptHandler<EXTI11>;
@@ -95,9 +87,9 @@ async fn main(spawner: Spawner) {
     mcu_config.rcc.msis = Some(embassy_stm32::rcc::MSIRange::RANGE_48MHZ);
     mcu_config.rcc.pll3 = Some(embassy_stm32::rcc::Pll {
         source: embassy_stm32::rcc::PllSource::MSIS,
-        prediv: embassy_stm32::rcc::PllPreDiv::DIV5,  // 9.6MHz
+        prediv: embassy_stm32::rcc::PllPreDiv::DIV5,    //  9.6MHz
         mul: embassy_stm32::rcc::PllMul::MUL32,        // 307.2MHz
-        divp: Some(embassy_stm32::rcc::PllDiv::DIV5),  // 61.44MHz
+        divp: Some(embassy_stm32::rcc::PllDiv::DIV5), //   61.44MHz
         divq: None,
         divr: None,
     });
@@ -112,9 +104,9 @@ async fn main(spawner: Spawner) {
     sai_config.protocol = Protocol::Free;
     sai_config.data_size = DataSize::Data16;
     sai_config.slot_count = word::U4(2);
-    // Dăm voie la ambele canale (3 = 0b00000011)
+    // both channels (3 = 0b00000011)
     sai_config.slot_enable = 3;
-    // Un cadru total e 32 (16 stanga + 16 dreapta) 
+    // 16 left + 16 right
     sai_config.frame_length = 32;
     sai_config.frame_sync_active_level_length = word::U7(16);
     sai_config.frame_sync_offset = embassy_stm32::sai::FrameSyncOffset::BeforeFirstBit;
@@ -127,10 +119,10 @@ async fn main(spawner: Spawner) {
 
     let dma_buf = DMA_BUF.init([0u16; 2048]);
     let sai = Sai::new_asynchronous(
-        sai1_subblocks.0, // Folosim Sub-blocul A
+        sai1_subblocks.0, // subblock A
         p.PA8,            // SCK -> BCK
         p.PA10,           // SD  -> DIN
-        p.PA9,            // FS  -> LRCK
+        p.PA9,           // FS  -> LRCK
         p.GPDMA1_CH0,
         dma_buf,
         Irqs,
@@ -167,15 +159,15 @@ async fn main(spawner: Spawner) {
 
     let note_c2 = ExtiInput::new(p.PC11, p.EXTI11, Pull::Up, Irqs);
     let note_b = ExtiInput::new(p.PD2, p.EXTI2, Pull::Up, Irqs);
- 
+
     let note_f_sharp = ExtiInput::new(p.PC13, p.EXTI13, Pull::Up, Irqs);
-    let note_d_sharp = ExtiInput::new(p.PC14, p.EXTI14, Pull::Up, Irqs);
-    let note_c_sharp = ExtiInput::new(p.PC15, p.EXTI15, Pull::Up, Irqs);
+    let note_d_sharp = ExtiInput::new(p.PB15, p.EXTI15, Pull::Up, Irqs);
+    let note_c_sharp = ExtiInput::new(p.PB14, p.EXTI14, Pull::Up, Irqs);
 
     let note_d = ExtiInput::new(p.PH0, p.EXTI0, Pull::Up, Irqs);
-    let note_c1 = ExtiInput::new(p.PH1, p.EXTI1, Pull::Up, Irqs);
+    let note_c1 = ExtiInput::new(p.PB1, p.EXTI1, Pull::Up, Irqs);
 
-    let note_a = ExtiInput::new(p.PB4, p.EXTI4, Pull::Up, Irqs);
+    let note_a = ExtiInput::new(p.PA6, p.EXTI6, Pull::Up, Irqs);
     let note_g = ExtiInput::new(p.PB5, p.EXTI5, Pull::Up, Irqs);
     let note_f = ExtiInput::new(p.PB3, p.EXTI3, Pull::Up, Irqs);
     let note_e = ExtiInput::new(p.PC8, p.EXTI8, Pull::Up, Irqs);
@@ -191,7 +183,7 @@ async fn main(spawner: Spawner) {
     qei_conf.ch1_pull = Pull::Up;
     qei_conf.ch2_pull = Pull::Up;
     let enc1 = Qei::new(p.TIM2, p.PA0, p.PA1, qei_conf);
-    let enc2 = Qei::new(p.TIM3, p.PA6, p.PA7, qei_conf);
+    let enc2 = Qei::new(p.TIM3, p.PB4, p.PA7, qei_conf);
 
     let initial_state = SynthState::new();
     let state_ref = STATE.init(Mutex::new(RefCell::new(initial_state)));
@@ -205,6 +197,12 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(page_task(state_ref, b_next_page, 1)).unwrap();
     spawner.spawn(page_task(state_ref, b_prev_page, 0)).unwrap();
+
+    let b_pause_play_clr = Input::new(p.PB13, Pull::Up);
+    let b_rec = Input::new(p.PB10, Pull::Up);
+
+    spawner.spawn(page_task(state_ref, b_pause_play_clr, 1)).unwrap();
+    spawner.spawn(page_task(state_ref, b_rec, 0)).unwrap();
 
     static SIN_WAVETABLE: StaticCell<[f32; 128]> = StaticCell::new();
     static TRI_WAVETABLE: StaticCell<[f32; 128]> = StaticCell::new();
