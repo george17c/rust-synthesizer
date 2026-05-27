@@ -12,7 +12,7 @@ use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use crate::{input::page_task, synth::effects::DisplayPage};
 
 use video::DisplayManager;
-use input::{input_task, key_task};
+use input::{input_task, key_task, btn_play_task, btn_rec_task};
 use synth::{make_wtable, wave_sine, wave_triangle, wave_saw};
 use synth::effects::SynthState;
 
@@ -175,10 +175,6 @@ async fn main(spawner: Spawner) {
         note_c1, note_c_sharp, note_d, note_d_sharp, note_e, note_f, note_f_sharp, note_g, note_g_sharp, note_a, note_a_sharp, note_b, note_c2
     ];
 
-    for (i, key) in keys.into_iter().enumerate() {
-        spawner.spawn(key_task(key, i)).unwrap();
-    }
-
     let mut qei_conf = qei::Config::default();
     qei_conf.ch1_pull = Pull::Up;
     qei_conf.ch2_pull = Pull::Up;
@@ -187,6 +183,10 @@ async fn main(spawner: Spawner) {
 
     let initial_state = SynthState::new();
     let state_ref = STATE.init(Mutex::new(RefCell::new(initial_state)));
+    
+    for (i, key) in keys.into_iter().enumerate() {
+        spawner.spawn(key_task(state_ref, key, i)).unwrap();
+    }
 
     spawner.spawn(input_task(state_ref, adc, p.GPDMA1_CH1,
         vol_pot, eff1_pot, eff2_pot, eff4_pot,
@@ -201,8 +201,8 @@ async fn main(spawner: Spawner) {
     let b_pause_play_clr = Input::new(p.PB13, Pull::Up);
     let b_rec = Input::new(p.PB10, Pull::Up);
 
-    spawner.spawn(page_task(state_ref, b_pause_play_clr, 1)).unwrap();
-    spawner.spawn(page_task(state_ref, b_rec, 0)).unwrap();
+    spawner.spawn(btn_play_task(state_ref, b_pause_play_clr)).unwrap();
+    spawner.spawn(btn_rec_task(state_ref, b_rec)).unwrap();
 
     static SIN_WAVETABLE: StaticCell<[f32; 128]> = StaticCell::new();
     static TRI_WAVETABLE: StaticCell<[f32; 128]> = StaticCell::new();

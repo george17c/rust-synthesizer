@@ -3,6 +3,7 @@ pub mod classic_osc;
 pub mod pulse_osc;
 pub mod svf_filter;
 pub mod effects;
+pub mod sequencer;
 
 pub use classic_osc::{WtableUnison, WtableOscillator, make_wtable};
 pub use classic_osc::{wave_sine, wave_saw, wave_triangle};

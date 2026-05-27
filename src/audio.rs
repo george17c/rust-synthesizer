@@ -1,6 +1,6 @@
 use defmt::info;
 use crate::VOLUME;
-use crate::input::KEY_BITMASK;
+use crate::input::{KEY_BITMASK, SEQ_BITMASK};
 use crate::synth::adsr::AdsrStage;
 use crate::synth::effects::SynthState;
 use {defmt_rtt as _, panic_probe as _};
@@ -115,7 +115,7 @@ pub async fn audio_task(
             voice.table_unison.active_voices = params.unison_voices;
         }
 
-        let current_mask = KEY_BITMASK.load(Ordering::Relaxed);
+        let current_mask = KEY_BITMASK.load(Ordering::Relaxed) | SEQ_BITMASK.load(Ordering::Relaxed);
         if current_mask != last_mask {
             for i in 0..13 {
                 let is_pressed = (current_mask & (1 << i)) != 0;

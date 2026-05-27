@@ -1,10 +1,8 @@
-// use defmt::info;
 use crate::VOLUME;
 use crate::DisplayPage;
 use crate::synth::effects::EffectType;
 use crate::synth::effects::SynthState;
 use crate::synth::Preset;
-use defmt::info;
 use core::sync::atomic::{AtomicU16, Ordering};
 use {defmt_rtt as _, panic_probe as _};
 use embassy_stm32::{peripherals, Peri};
@@ -86,10 +84,145 @@ pub fn pot_to_0_1_fine(val: u32) -> f32 {
     discrete_steps as f32 * 0.01
 }
 
+pub static SEQ_BITMASK: AtomicU16 = AtomicU16::new(0);
 pub static KEY_BITMASK: AtomicU16 = AtomicU16::new(0);
+
+#[task]
+pub async fn seq_playback_task(state: &'static Mutex<ThreadModeRawMutex, RefCell<SynthState>>) {
+    let bpm = 120.0;
+    let step_ms = (60_000.0 / bpm / 4.0) as u64; 
+    let mut current_step = 0;
+
+    loop {
+        let (is_playing, len, mask) = state.lock(|s| {
+            let seq = &s.borrow().sequencer;
+            let mut temp_mask = 0;
+
+            if seq.is_playing {
+                for track in 0..4 {
+                    if let Some(note_idx) = seq.steps[current_step][track] {
+                        temp_mask |= 1 << note_idx;
+                    }
+                }
+            }
+            (seq.is_playing, seq.length, temp_mask)
+        });
+
+        if is_playing {
+            SEQ_BITMASK.store(mask, Ordering::Relaxed);
+
+            Timer::after_millis(step_ms * 8 / 10).await;
+
+            SEQ_BITMASK.store(0, Ordering::Relaxed);
+            Timer::after_millis(step_ms * 2 / 10).await;
+
+            current_step = (current_step + 1) % len;
+        } else {
+            current_step = 0;
+            Timer::after_millis(50).await;
+        }
+    }
+}
+
+#[task]
+pub async fn btn_rec_task(
+    state: &'static Mutex<ThreadModeRawMutex, RefCell<SynthState>>, 
+    btn: Input<'static>
+) {
+    loop {
+        if btn.is_low() {
+            Timer::after_millis(30).await;
+
+            if btn.is_low() {
+                state.lock(|s| {
+                    let mut synth = s.borrow_mut();
+                    let seq = &mut synth.sequencer;
+
+                    if !seq.is_recording {
+                        seq.clear();
+                        seq.is_recording = true;
+                        defmt::info!("⏺ RECORDING PORNIT");
+                    } else {
+                        seq.steps[seq.rec_step] = [None; 4];
+                        seq.rec_step = (seq.rec_step + 1) % seq.length;
+                        defmt::info!("⏺ Inserat REST. Pas curent: {}", seq.rec_step);
+
+                        if seq.rec_step == 0 {
+                            seq.is_recording = false;
+                            seq.is_playing = true;
+                            defmt::info!("▶ AUTO-PLAY");
+                        }
+                    }
+                });
+
+                while btn.is_low() {
+                    Timer::after_millis(10).await;
+                }
+                Timer::after_millis(30).await;
+            }
+        }
+
+        Timer::after_millis(20).await;
+    }
+}
+
+#[task]
+pub async fn btn_play_task(
+    state: &'static Mutex<ThreadModeRawMutex, RefCell<SynthState>>, 
+    btn: Input<'static>
+) {
+    loop {
+        if btn.is_low() {
+            Timer::after_millis(30).await;
+
+            if btn.is_low() {
+                let mut press_time = 0;
+
+                while btn.is_low() {
+                    Timer::after_millis(10).await;
+                    press_time += 10;
+
+                    if press_time == 1000 {
+                        state.lock(|s| {
+                            let mut synth = s.borrow_mut();
+                            synth.sequencer.clear();
+                            defmt::info!("🗑 SECVENȚA ȘTEARSĂ!");
+                        });
+                    }
+                }
+
+                if press_time > 0 && press_time < 1000 {
+                    state.lock(|s| {
+                        let mut synth = s.borrow_mut();
+                        let seq = &mut synth.sequencer;
+
+                        if seq.is_recording {
+                            // submit & play
+                            if seq.rec_step > 0 {
+                                seq.length = seq.rec_step;
+                            }
+                            seq.is_recording = false;
+                            seq.is_playing = true;
+                            defmt::info!("▶ SUBMIT & PLAY");
+                        } else {
+                            // play/pause
+                            seq.is_playing = !seq.is_playing;
+                            defmt::info!("⏯ PLAY/PAUSE: {}", seq.is_playing);
+                        }
+                    });
+                }
+
+                Timer::after_millis(30).await;
+            }
+        }
+
+        Timer::after_millis(20).await;
+    }
+}
 
 #[task(pool_size = 13)]
 pub async fn key_task(
+    state: &'static Mutex<ThreadModeRawMutex, RefCell<SynthState>>,
     mut key: ExtiInput<'static, Async>,
     idx: usize,
 ) {
@@ -99,9 +232,28 @@ pub async fn key_task(
 
         Timer::after_millis(50).await;
 
-        while key.is_low() {
-            Timer::after_millis(10).await;
-        }
+        state.lock(|s| {
+            let mut synth = s.borrow_mut();
+            let seq = &mut synth.sequencer;
+
+            if seq.is_recording {
+                let step = seq.rec_step;
+
+                for t in 0..4 {
+                    if seq.steps[step][t] == None {
+                        seq.steps[step][t] = Some(idx);
+                        break;
+                    }
+                }
+
+                seq.rec_step = (seq.rec_step + 1) % seq.length;
+
+                if seq.rec_step == 0 {
+                    seq.is_recording = false;
+                    seq.is_playing = true;
+                }
+            }
+        });
 
         key.wait_for_high().await;
         KEY_BITMASK.fetch_and(!(1 << idx), Ordering::Relaxed);
@@ -110,7 +262,7 @@ pub async fn key_task(
     }
 }
 
-#[task(pool_size = 4)]
+#[task(pool_size = 2)]
 pub async fn page_task(state: &'static Mutex<ThreadModeRawMutex, RefCell<SynthState>>, button: Input<'static>, idx: u16) {
     loop {
         if button.is_low() {
@@ -118,8 +270,6 @@ pub async fn page_task(state: &'static Mutex<ThreadModeRawMutex, RefCell<SynthSt
                 1 => state.lock(|s| s.borrow_mut().next_page()),
                 _ => state.lock(|s| s.borrow_mut().prev_page()),
             }
-
-            info!("page");
 
             while button.is_low() {
                 Timer::after_millis(10).await;
