@@ -1,4 +1,4 @@
-pub const PRESETS_NUM: usize = 3;
+pub const PRESETS_NUM: usize = 5;
 pub const EFFECTS_NUM: usize = 6;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -202,6 +202,14 @@ impl Preset {
         }
     }
 
+    pub fn with_effects(name: &'static str, effects: [Effect; EFFECTS_NUM]) -> Self {
+        Self {
+            name,
+            effects,
+            idx: 0,
+        }
+    }
+
     pub fn next_effect(&mut self) {
         if self.idx < EFFECTS_NUM - 1 {
             self.idx += 1;
@@ -233,9 +241,63 @@ impl SynthState {
     pub fn new() -> SynthState {
         Self {
             presets: [
-                Preset::new("CUSTOM 1"),
-                Preset::new("Custom 2"),
-                Preset::new(":p"),
+                Preset::with_effects("Bells", [
+                    // duty_cycle (eff2), sine (eff3)
+                    Effect::new(EffectState::On, EffectType::Waveform, 0.0, 0.0, 1.0, 0.0),
+                    // range (ex C2 - B2, C3 - B3 etc, eff2) & shift (eff4)
+                    Effect::new(EffectState::On, EffectType::MusicalRange, 0.0, 2.0, 0.0, 0.0),
+                    // attack decay sustain release
+                    Effect::new(EffectState::On, EffectType::Envelope, 0.0, 0.0, 1.0, 1.0),
+                    // unison voices (eff3) & detune (eff4)
+                    Effect::new(EffectState::Off, EffectType::Unison, 0.0, 0.0, 1.0, 0.0),
+                    //  ratio (eff2), sine waveform (eff3), amount (eff4)
+                    Effect::new(EffectState::Off, EffectType::FMMod, 0.0, 3.5, 0.0, 4.0),
+                    // cutoff (eff1), resonance (eff2), type (eff3), envelope_amount (eff4)
+                    Effect::new(EffectState::Off, EffectType::Filter, 0.0, 0.0, 3.0, 0.0),
+                ]),
+                Preset::new("Simple"),
+                Preset::with_effects("Bass", [
+                    // duty_cycle (eff2), sine (eff3)
+                    Effect::new(EffectState::On, EffectType::Waveform, 0.0, 0.0, 3.0, 0.0),
+                    // range (ex C2 - B2, C3 - B3 etc, eff2) & shift (eff4)
+                    Effect::new(EffectState::On, EffectType::MusicalRange, 0.0, 0.0, 0.0, 0.0),
+                    // attack decay sustain release
+                    Effect::new(EffectState::On, EffectType::Envelope, 0.05, 0.4, 0.8, 0.4),
+                    // unison voices (eff3) & detune (eff4)
+                    Effect::new(EffectState::Off, EffectType::Unison, 0.0, 0.0, 1.0, 0.0),
+                    //  ratio (eff2), sine waveform (eff3), amount (eff4)
+                    Effect::new(EffectState::Off, EffectType::FMMod, 0.0, 0.5, 0.0, 1.0),
+                    // cutoff (eff1), resonance (eff2), type (eff3), envelope_amount (eff4)
+                    Effect::new(EffectState::Off, EffectType::Filter, 0.0, 0.0, 3.0, 0.0),
+                ]),
+                Preset::with_effects("Cat", [
+                    // duty_cycle (eff2), sine (eff3)
+                    Effect::new(EffectState::On, EffectType::Waveform, 0.0, 0.0, 3.0, 0.0),
+                    // range (ex C2 - B2, C3 - B3 etc, eff2) & shift (eff4)
+                    Effect::new(EffectState::On, EffectType::MusicalRange, 0.0, 2.0, 0.0, 0.0),
+                    // attack decay sustain release
+                    Effect::new(EffectState::On, EffectType::Envelope, 0.05, 0.4, 0.8, 0.4),
+                    // unison voices (eff3) & detune (eff4)
+                    Effect::new(EffectState::Off, EffectType::Unison, 0.0, 0.0, 1.0, 0.0),
+                    //  ratio (eff2), sine waveform (eff3), amount (eff4)
+                    Effect::new(EffectState::Off, EffectType::FMMod, 0.0, 1.0, 0.0, 0.0),
+                    // cutoff (eff1), resonance (eff2), type (eff3), envelope_amount (eff4)
+                    Effect::new(EffectState::Off, EffectType::Filter, 0.2, 0.85, 0.0, 0.5),
+                ]),
+                Preset::with_effects("Chorus", [
+                    // duty_cycle (eff2), sine (eff3)
+                    Effect::new(EffectState::On, EffectType::Waveform, 0.0, 0.0, 3.0, 0.0),
+                    // range (ex C2 - B2, C3 - B3 etc, eff2) & shift (eff4)
+                    Effect::new(EffectState::On, EffectType::MusicalRange, 0.0, 1.0, 0.0, 0.0),
+                    // attack decay sustain release
+                    Effect::new(EffectState::On, EffectType::Envelope, 0.8, 0.0, 1.0, 1.0),
+                    // unison voices (eff3) & detune (eff4)
+                    Effect::new(EffectState::Off, EffectType::Unison, 0.0, 0.0, 3.0, 0.01),
+                    //  ratio (eff2), sine waveform (eff3), amount (eff4)
+                    Effect::new(EffectState::Off, EffectType::FMMod, 0.0, 1.0, 0.0, 0.0),
+                    // cutoff (eff1), resonance (eff2), type (eff3), envelope_amount (eff4)
+                    Effect::new(EffectState::Off, EffectType::Filter, 0.0, 0.0, 3.0, 0.0),
+                ]),
             ],
             idx: 0,
             page: DisplayPage::PresetList,
