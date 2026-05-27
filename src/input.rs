@@ -20,13 +20,13 @@ use embassy_stm32::gpio::Input;
 use crate::Irqs;
 
 const POT_MIN: u32 = 2000;
-const POT_MAX: u32 = 14000;
+const POT_MAX: u32 = 13000;
 
 fn pot_to_volume(val: u32) -> i16 {
     let clamped = val.clamp(POT_MIN, POT_MAX);
     let adjusted_val = clamped - POT_MIN;
-    let range = POT_MAX - POT_MIN; // 13000
-    let discrete_steps = ((adjusted_val * 10) + (range / 2)) / range;
+    let range = POT_MAX - POT_MIN;
+    let discrete_steps = ((adjusted_val * 100) + (range / 2)) / range;
 
     discrete_steps as i16
 }
@@ -97,7 +97,11 @@ pub async fn key_task(
         key.wait_for_low().await;
         KEY_BITMASK.fetch_or(1 << idx, Ordering::Relaxed);
 
-        Timer::after_millis(30).await;
+        Timer::after_millis(50).await;
+
+        while key.is_low() {
+            Timer::after_millis(10).await;
+        }
 
         key.wait_for_high().await;
         KEY_BITMASK.fetch_and(!(1 << idx), Ordering::Relaxed);
@@ -106,7 +110,7 @@ pub async fn key_task(
     }
 }
 
-#[task(pool_size = 2)]
+#[task(pool_size = 4)]
 pub async fn page_task(state: &'static Mutex<ThreadModeRawMutex, RefCell<SynthState>>, button: Input<'static>, idx: u16) {
     loop {
         if button.is_low() {
@@ -118,7 +122,6 @@ pub async fn page_task(state: &'static Mutex<ThreadModeRawMutex, RefCell<SynthSt
             info!("page");
 
             while button.is_low() {
-                info!("a");
                 Timer::after_millis(10).await;
             }
 
@@ -154,10 +157,8 @@ pub async fn input_task(
         (&mut eff4_pot   as &mut AnyAdcChannel<peripherals::ADC1>, SampleTime::CYCLES160_5),
     ];
 
-    info!("inainte de loop input");
-
     loop {
-        let nsamples = 8;
+        let nsamples = 16;
         let mut vol: u32 = 0;
         let mut pot1: u32 = 0;
         let mut pot2: u32 = 0;
@@ -185,10 +186,9 @@ pub async fn input_task(
         if new_volume != last_volume {
             last_volume = new_volume;
             VOLUME.store(new_volume, Ordering::Relaxed);
-            // info!("raw={} volume={}", vol, new_volume);
         }
 
-        info!("vol: {}, ef1: {}, ef2: {}, ef4: {}", new_volume, pot1, pot2, pot4);
+        // info!("vol: {}, ef1: {}, ef2: {}, ef4: {}", vol, pot1, pot2, pot4);
 
         let current_select = select_enc.count();
         let current_eff3 = eff3_enc.count();
@@ -201,13 +201,11 @@ pub async fn input_task(
         if delta_select >= 4 || delta_select <= -4 {
             rot_select = delta_select / 4;
             last_select = last_select.wrapping_add((rot_select * 4) as u16);
-            info!("Enc1 s-a mișcat cu: {} pași", rot_select);
         }
 
         if delta_eff3 >= 4 || delta_eff3 <= -4 {
             rot_eff3 = delta_eff3 / 4;
             last_eff3 = last_eff3.wrapping_add((rot_eff3 * 4) as u16);
-            // info!("Enc2 s-a mișcat cu: {} pași", rot_eff3);
         }
 
         state.lock(|s| {
@@ -274,7 +272,6 @@ pub async fn input_task(
             }
         });
 
-        // pune 10
-        Timer::after_millis(50).await;
+        Timer::after_millis(20).await;
     }
 }

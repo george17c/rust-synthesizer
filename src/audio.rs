@@ -29,7 +29,7 @@ pub struct Voice {
 
     pub filter: SvfFilter,
     pub modulator: WtableOscillator,
- 
+
     pub adsr: AdsrEnvelope,
     pub active_freq: f32,
     pub active_key: usize,
@@ -61,9 +61,9 @@ pub async fn audio_task(
     tri_table: &'static [f32; 128],
     saw_table: &'static [f32; 128],
 ) {
-    let mut data = [0u16; 2048];
+    let mut data = [0u16; 1024];
 
-    let mut voices: [Voice; 6] = core::array::from_fn(|_| {
+    let mut voices: [Voice; 5] = core::array::from_fn(|_| {
         Voice {
             table_unison: WtableUnison::new(48000, sin_table),
             pulse_unison: PulseUnison::new(48000),
@@ -109,16 +109,6 @@ pub async fn audio_task(
             }
         });
 
-        // defmt::info!(
-        //     "Params | Wf: duty={}, mode={} | Rng: oct={}, semi={} | Env: A={}, D={}, S={}, R={} | Uni: v={}, det={} | FM: rat={}, shp={}, amt={} | Flt: cut={}, res={}, typ={}, env={}",
-        //     params.duty, params.mode,
-        //     params.octave, params.semi,
-        //     params.atk, params.dcy, params.sus, params.rel,
-        //     params.unison_voices, params.detune,
-        //     params.fm_ratio, params.fm_shape, params.fm_amt,
-        //     params.cutoff, params.res, params.filter_type, params.filter_env
-        // );
-
         for voice in voices.iter_mut() {
             voice.adsr.set_params(params.atk, params.dcy, params.sus, params.rel);
             voice.pulse_unison.active_voices = params.unison_voices;
@@ -163,7 +153,7 @@ pub async fn audio_task(
                 if voice.adsr.stage != AdsrStage::Off {
                     let env_vol = voice.adsr.tick();
 
-                    // Setăm Modulatorul FM
+                    // modulator
                     voice.modulator.set_table(match params.fm_shape { 
                         1 => tri_table, 2 => saw_table, _ => sin_table 
                     });
@@ -172,7 +162,7 @@ pub async fn audio_task(
                     let m_sig = voice.modulator.get_sample();
                     let phase_mod = m_sig * params.fm_amt * 0.25;
 
-                    // Oscilatorul Principal
+                    // main oscillator
                     let raw_sample = match params.mode {
                         0 => { // Pulse
                             voice.pulse_unison.set_freq_and_detune(voice.active_freq, params.detune);
@@ -195,7 +185,6 @@ pub async fn audio_task(
                         _ => 0.0,
                     };
 
-                    // Filtrul
                     let filtered_sample = if params.filter_type == 3 {
                         raw_sample
                     } else {
@@ -210,17 +199,16 @@ pub async fn audio_task(
                         }
                     };
 
-                    // Mixăm vocea (amplificată prin plicul ei ADSR)
                     mixed_sample += filtered_sample * env_vol;
                 }
             }
 
-            // Aplicăm volumul global (master)
-            let vol = VOLUME.load(Ordering::Relaxed) as f32 / 10.0;
+            let vol_norm = VOLUME.load(Ordering::Relaxed) as f32 / 100.0;
+            let vol = vol_norm * vol_norm;
+
             let master_out = mixed_sample * vol * 0.2;
 
-            // Scalăm la 16-biți pentru DAC
-            let final_sample = (master_out * 16384.0).clamp(-16384.0, 16384.0) as i16 as u16;
+            let final_sample = (master_out * 20000.0).clamp(-20000.0, 20000.0) as i16 as u16;
 
             data[i]     = final_sample; // left channel
             data[i + 1] = final_sample; // right channel
